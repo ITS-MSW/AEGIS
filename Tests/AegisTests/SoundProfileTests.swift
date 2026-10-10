@@ -6,7 +6,7 @@ final class SoundProfileTests: XCTestCase {
     func testProfessionalProfilesHaveStableNames() {
         XCTAssertEqual(
             SoundProfile.allCases.map(\.displayName),
-            ["Quiet Glass", "Soft Relay", "Deep Signal", "Meme"]
+            ["Quiet Glass", "Soft Relay", "Deep Signal", "Meme", "F1"]
         )
     }
 
@@ -17,7 +17,7 @@ final class SoundProfileTests: XCTestCase {
             .deletingLastPathComponent()
             .appendingPathComponent("Resources/sounds/meme", isDirectory: true)
 
-        for name in ["yamete-kudasai", "brief-action", "skill-issue"] {
+        for name in ["yamete-kudasai"] {
             let file = try AVAudioFile(
                 forReading: resources.appendingPathComponent("\(name).aiff")
             )
@@ -29,37 +29,74 @@ final class SoundProfileTests: XCTestCase {
     func testMemeProfileUsesEventSpecificClips() {
         let profile = SoundProfile.meme
 
-        XCTAssertEqual(profile.bundledSoundName(for: .sessionStart), "brief-action")
-        XCTAssertEqual(profile.bundledSoundName(for: .toolUse), "brief-action")
-        XCTAssertEqual(profile.bundledSoundName(for: .skillIssue), "skill-issue")
-
-        for event in SoundEvent.allCases where ![.sessionStart, .toolUse, .skillIssue].contains(event) {
+        for event in SoundEvent.allCases {
             XCTAssertEqual(profile.bundledSoundName(for: event), "yamete-kudasai", event.rawValue)
         }
     }
 
-    func testEventsMapToCompletionAttentionAndFailureCues() {
-        XCTAssertEqual(SoundEvent.completion.cue, .completion)
-        XCTAssertEqual(SoundEvent.sessionEnd.cue, .completion)
-        XCTAssertEqual(SoundEvent.approvalGranted.cue, .completion)
+    func testF1ProfileUsesReadableEventClips() throws {
+        let profile = SoundProfile.f1
+        XCTAssertEqual(SettingsStore.resolveSoundProfile(rawValue: "f1"), profile)
+        XCTAssertEqual(profile.previewEvents, [.sessionEnd, .error])
+        XCTAssertEqual(profile.bundledSoundSubdirectory, "sounds/f1")
+        let resources = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Resources/\(try XCTUnwrap(profile.bundledSoundSubdirectory))")
+        let clips: [SoundEvent: String] = [
+            .sessionEnd: "completion",
+            .error: "failure",
+        ]
 
-        XCTAssertEqual(SoundEvent.approvalNeeded.cue, .attention)
-        XCTAssertEqual(SoundEvent.sessionStart.cue, .attention)
-        XCTAssertEqual(SoundEvent.toolUse.cue, .attention)
-
-        XCTAssertEqual(SoundEvent.error.cue, .failure)
-        XCTAssertEqual(SoundEvent.approvalDenied.cue, .failure)
-        XCTAssertEqual(SoundEvent.skillIssue.cue, .skillIssue)
+        for event in SoundEvent.allCases {
+            XCTAssertEqual(profile.bundledSoundName(for: event), clips[event], event.rawValue)
+        }
+        for name in Set(clips.values) {
+            let file = try AVAudioFile(forReading: resources.appendingPathComponent("\(name).aiff"))
+            XCTAssertGreaterThan(file.length, 0, name)
+            XCTAssertEqual(file.processingFormat.channelCount, 1, name)
+            XCTAssertEqual(file.processingFormat.sampleRate, 44_100, name)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(
+                pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)
+            ))
+            try file.read(into: buffer)
+            XCTAssertGreaterThan(peakAmplitude(of: buffer), 0.01, name)
+        }
     }
 
-    func testEveryProfileGeneratesFourDistinctBoundedCues() throws {
+    func testOnlySessionEndAndErrorTriggerSounds() {
+        XCTAssertEqual(SoundEvent.allCases, [.sessionEnd, .error])
+        XCTAssertEqual(SoundEvent(sessionEvent: .sessionEnded("session")), .sessionEnd)
+        XCTAssertEqual(SoundEvent(sessionEvent: .statusChanged("session", .error)), .error)
+
+        let silentEvents: [SessionEvent] = [
+            .sessionStarted("session"),
+            .statusChanged("session", .idle),
+            .statusChanged("session", .thinking),
+            .toolStarted("session", "Bash"),
+            .toolEnded("session", "Bash", .success),
+            .permissionRequested("session"),
+            .permissionResponded("session", true),
+            .permissionResponded("session", false),
+            .questionAsked("session"),
+            .pendingDismissedExternally("session"),
+            .notification("session", "message"),
+        ]
+        for event in silentEvents {
+            XCTAssertNil(SoundEvent(sessionEvent: event))
+        }
+    }
+
+    func testEveryProfileGeneratesTwoDistinctBoundedCues() throws {
         for profile in SoundProfile.allCases {
+            XCTAssertEqual(profile.previewEvents, [.sessionEnd, .error])
             let synthesizer = SoundSynthesizer(profile: profile)
-            let buffers = try [SoundEvent.completion, .approvalNeeded, .error, .skillIssue].map {
+            let buffers = try SoundEvent.allCases.map {
                 try XCTUnwrap(synthesizer.generateSound(for: $0))
             }
 
-            XCTAssertEqual(Set(buffers.map(\.frameLength)).count, 4, profile.displayName)
+            XCTAssertEqual(Set(buffers.map(\.frameLength)).count, 2, profile.displayName)
             for buffer in buffers {
                 XCTAssertGreaterThan(buffer.frameLength, 0)
                 XCTAssertLessThanOrEqual(peakAmplitude(of: buffer), 0.24)
@@ -71,14 +108,15 @@ final class SoundProfileTests: XCTestCase {
     }
 
     func testProfilesProduceDifferentCompletionContours() throws {
-        let signatures = try SoundProfile.allCases.map { profile in
+        let synthesizedProfiles = SoundProfile.allCases.filter { $0.bundledSoundSubdirectory == nil }
+        let signatures = try synthesizedProfiles.map { profile in
             let buffer = try XCTUnwrap(
-                SoundSynthesizer(profile: profile).generateSound(for: .completion)
+                SoundSynthesizer(profile: profile).generateSound(for: .sessionEnd)
             )
             return Int(meanAbsoluteAmplitude(of: buffer) * 1_000_000)
         }
 
-        XCTAssertEqual(Set(signatures).count, SoundProfile.allCases.count)
+        XCTAssertEqual(Set(signatures).count, synthesizedProfiles.count)
     }
 
     func testLegacyYameteProfileMigratesToMeme() {

@@ -1,6 +1,6 @@
 # AEGIS Architecture & System Specification
 
-Aegis is a native macOS application for monitoring and interacting with AI coding agents (OpenAI Codex, Nous Hermes, OpenCode, and Google AntiGravity). It combines a borderless notch UI, a local Unix domain socket bridge, passive filesystem/database watchers, an ambient pixel companion, and audio synthesis.
+Aegis is a native macOS application for monitoring and interacting with AI coding agents (OpenAI Codex, Nous Hermes, OpenCode, and Google AntiGravity). It combines a borderless notch UI, a local Unix domain socket bridge, passive filesystem/database watchers, and audio synthesis.
 
 ---
 
@@ -26,7 +26,7 @@ Aegis is a native macOS application for monitoring and interacting with AI codin
 │   SocketServer ──▶ SessionStore ──▶ NotchWindowController / SwiftUI   │
 │                         ▲                     ▲                        │
 │                         │                     │                        │
-│   CodexDesktopWatcher ──┤           CompanionWindowController (Mysa)   │
+│   CodexDesktopWatcher ──┤                                              │
 │   (~/.codex/sessions)   │                     ▲                        │
 │                         │                     │                        │
 │   HermesDesktopWatcher ─┘             SoundEngine & Synthesizer        │
@@ -85,7 +85,7 @@ The system operates across two main boundaries:
 | `SessionEnd` | Agent session officially terminated; triggers turn end and schedules removal. |
 | `UserPromptSubmit` | User submitted a prompt; moves status to `.thinking` and engages power assertion. |
 | `PreToolUse` | Agent is about to invoke a tool; moves status to `.toolUse` (or prompts approval in strict mode). |
-| `PostToolUse` | Tool execution finished; records elapsed duration and feeds `SkillIssueDetector`. |
+| `PostToolUse` | Tool execution finished; records elapsed duration and tool outcome. |
 | `PermissionRequest` | Agent requires explicit user consent; displays in-notch approval UI. |
 | `Stop` | LLM turn finished; moves status to `.idle` and presents markdown finish card. |
 | `Notification` | Informational notification from agent. |
@@ -122,7 +122,7 @@ Each AI provider uses distinct hook mechanisms that Aegis normalizes:
 - **Integration**: Hooks merged into `~/.hermes/config.yaml`.
 - **Sanitization**: Hermes CLI frequently outputs unescaped control characters (`\n`, `\t`) inside JSON strings; `AegisBridge` applies a byte-level sanitizer (`sanitizeControlChars`) before JSON parsing.
 - **Strict Mode**: Translates `pre_tool_call` into a blocking `PermissionRequest` if enabled in `~/.aegis/config.json`.
-- **Voice Mode**: Integrates directly with Hermes speech module (`tools.voice_mode.transcribe_recording`).
+- **Dictation Transcription**: Integrates directly with Hermes speech module (`tools.voice_mode.transcribe_recording`).
 
 ### 3. OpenCode
 - **Integration**: Node.js plugin written to `~/.config/opencode/plugins/aegis.js` and registered in `opencode.json`.
@@ -255,7 +255,7 @@ To keep AI coding agents executing when the user steps away:
 - **Custom Sound Packs**:
   - Reads audio files from `~/.aegis/sound-packs/`.
   - Converts incoming audio formats (.wav, .mp3, .m4a, .aiff, .caf) to the engine's internal format (44.1kHz mono PCM) via `AVAudioConverter`.
-- **Skill Issue Detector**: Tracks tool outcomes; if the same tool fails 3 times within a 90-second window in the same session, triggers a dedicated `skillIssueDetected` event.
+- **Events**: Only session end and error trigger sounds. Other lifecycle events remain available to session monitoring without playing audio.
 
 ---
 

@@ -3,7 +3,7 @@ import Foundation
 import AudioToolbox
 import CoreAudio
 
-final class HermesAudioRecorder {
+final class DictationAudioRecorder {
     private lazy var engine = AVAudioEngine()
     private var tapInstalled = false
     private var audioFile: AVAudioFile?
@@ -15,12 +15,12 @@ final class HermesAudioRecorder {
     func start(deviceID: AudioDeviceID? = nil, levelHandler: @escaping (Double) -> Void,
                failureHandler: (() -> Void)? = nil) throws -> URL {
         guard !engine.isRunning else {
-            throw HermesHandoffError.recordingFailed
+            throw DictationTranscriptionError.recordingFailed
         }
 
         engine = AVAudioEngine()
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("aegis-hermes-voice", isDirectory: true)
+            .appendingPathComponent("aegis-dictation", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let url = directory.appendingPathComponent("utterance-\(UUID().uuidString).wav")
         let input = engine.inputNode
@@ -28,13 +28,13 @@ final class HermesAudioRecorder {
             guard let unit = input.audioUnit,
                   AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
                     kAudioUnitScope_Global, 0, &deviceID, UInt32(MemoryLayout<AudioDeviceID>.size)) == noErr else {
-                throw HermesHandoffError.microphoneUnavailable
+                throw DictationTranscriptionError.microphoneUnavailable
             }
         }
         // Device selection updates the hardware format before the engine's cached output format.
         let format = input.inputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else {
-            throw HermesHandoffError.microphoneUnavailable
+            throw DictationTranscriptionError.microphoneUnavailable
         }
 
         let file = try AVAudioFile(forWriting: url, settings: [
@@ -83,7 +83,7 @@ final class HermesAudioRecorder {
             tapInstalled = false
             audioFile = nil
             cleanupFile()
-            throw HermesHandoffError.recordingFailed
+            throw DictationTranscriptionError.recordingFailed
         }
     }
 

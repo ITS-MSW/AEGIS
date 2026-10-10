@@ -10,16 +10,15 @@ private struct HermesTranscriptionPayload: Decodable {
     let transcriptionMilliseconds: Double?
 }
 
-actor HermesHandoffRunner {
+actor DictationTranscriptionRunner {
     private var transcriptions: [UUID: Process] = [:]
-    private var activeSubmissions: [UUID: Process] = [:]
 
     func transcribe(audioFile: URL, installation: HermesInstallation) async throws -> String {
         let recording = try AVAudioFile(forReading: audioFile)
         guard recording.length > 0 else {
-            throw HermesHandoffError.recordingEmpty
+            throw DictationTranscriptionError.recordingEmpty
         }
-        let plan = HermesHandoffProcessPlanner.transcriptionPlan(
+        let plan = DictationTranscriptionProcessPlanner.transcriptionPlan(
             installation: installation,
             audioFile: audioFile
         )
@@ -29,81 +28,19 @@ actor HermesHandoffRunner {
         guard let payload = transcriptionPayload(from: output),
               payload.success else {
             let detail = transcriptionPayload(from: output)?.error
-            throw HermesHandoffError.transcriptionFailed(detail)
+            throw DictationTranscriptionError.transcriptionFailed(detail)
         }
         if let imports = payload.importMilliseconds, let transcription = payload.transcriptionMilliseconds {
             Log.info(String(format: "Dictation timing total_ms=%.1f import_ms=%.1f transcription_ms=%.1f process_and_io_ms=%.1f",
                 totalMilliseconds, imports, transcription, max(0, totalMilliseconds - imports - transcription)))
         }
         let transcript = payload.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !transcript.isEmpty else { throw HermesHandoffError.noSpeech }
+        guard !transcript.isEmpty else { throw DictationTranscriptionError.noSpeech }
         return transcript
-    }
-
-    func submit(
-        transcript: String,
-        installation: HermesInstallation,
-        workingDirectory: URL,
-        target: HermesHandoffTarget
-    ) async throws {
-        let plan = HermesHandoffProcessPlanner.submissionPlan(
-            installation: installation,
-            workingDirectory: workingDirectory,
-            target: target
-        )
-        let process = Process()
-        let input = Pipe()
-        let identifier = UUID()
-
-        process.executableURL = plan.executable
-        process.arguments = plan.arguments
-        process.currentDirectoryURL = plan.currentDirectory
-        process.environment = Self.hermesEnvironment
-        process.standardInput = input
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        process.terminationHandler = { [weak self] process in
-            Task {
-                await self?.submissionFinished(identifier: identifier, status: process.terminationStatus)
-            }
-        }
-
-        do {
-            try process.run()
-            activeSubmissions[identifier] = process
-            if let data = transcript.data(using: .utf8) {
-                try input.fileHandleForWriting.write(contentsOf: data)
-            }
-            try input.fileHandleForWriting.close()
-            try await Task.sleep(for: .milliseconds(350))
-            if !process.isRunning, process.terminationStatus != 0 {
-                activeSubmissions[identifier] = nil
-                throw HermesHandoffError.submissionFailed
-            }
-            Log.info("Hermes voice handoff started target=\(target.rawValue) cwd=\(workingDirectory.path)")
-        } catch {
-            if process.isRunning {
-                process.terminate()
-            }
-            throw HermesHandoffError.submissionFailed
-        }
     }
 
     func stop() {
         for identifier in transcriptions.keys { cancelTranscription(identifier) }
-        for process in activeSubmissions.values where process.isRunning {
-            process.terminate()
-        }
-        activeSubmissions.removeAll()
-    }
-
-    private func submissionFinished(identifier: UUID, status: Int32) {
-        activeSubmissions[identifier] = nil
-        if status == 0 {
-            Log.info("Hermes voice handoff completed")
-        } else {
-            Log.error("Hermes voice handoff exited status=\(status)")
-        }
     }
 
     private func transcriptionPayload(from data: Data) -> HermesTranscriptionPayload? {
@@ -127,7 +64,7 @@ actor HermesHandoffRunner {
         }
     }
 
-    private func runToCompletion(_ plan: HermesHandoffProcessPlan) async throws -> Data {
+    private func runToCompletion(_ plan: DictationTranscriptionProcessPlan) async throws -> Data {
         try Task.checkCancellation()
         let identifier = UUID()
         let process = Process()
@@ -159,11 +96,11 @@ actor HermesHandoffRunner {
                     if process.terminationStatus == 0 {
                         continuation.resume()
                     } else {
-                        continuation.resume(throwing: HermesHandoffError.transcriptionFailed(nil))
+                        continuation.resume(throwing: DictationTranscriptionError.transcriptionFailed(nil))
                     }
                 }
                 do { try process.run() }
-                catch { continuation.resume(throwing: HermesHandoffError.installationMissing) }
+                catch { continuation.resume(throwing: DictationTranscriptionError.installationMissing) }
             }
         } onCancel: {
             Task { await self.cancelTranscription(identifier) }

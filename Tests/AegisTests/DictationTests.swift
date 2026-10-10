@@ -5,11 +5,10 @@ import UniformTypeIdentifiers
 @testable import Aegis
 
 final class DictationTests: XCTestCase {
-    func testDefaultsPreserveExistingPreferencesAndLegacyHandoff() {
+    func testDefaultsPreserveExistingPreferences() {
         let name = "AegisDictationTests.\(UUID())"
         let defaults = UserDefaults(suiteName: name)!
         defer { defaults.removePersistentDomain(forName: name) }
-        defaults.set(true, forKey: "hermesVoiceHandoffEnabled")
         SettingsStore.registerDictationDefaults(defaults)
         XCTAssertFalse(defaults.bool(forKey: "dictationEnabled"))
         XCTAssertFalse(defaults.bool(forKey: "dictationMuteWhileRecording"))
@@ -21,7 +20,6 @@ final class DictationTests: XCTestCase {
         defaults.set(true, forKey: "dictationEnabled")
         SettingsStore.registerDictationDefaults(defaults)
         XCTAssertTrue(defaults.bool(forKey: "dictationEnabled"))
-        XCTAssertTrue(defaults.bool(forKey: "hermesVoiceHandoffEnabled"))
         XCTAssertEqual(defaults.string(forKey: "dictationMode"), "hold")
         XCTAssertEqual(defaults.string(forKey: "dictationMicrophoneID"), "missing-device")
     }
@@ -159,24 +157,20 @@ final class DictationTests: XCTestCase {
 
     @MainActor
     func testCapsuleUsesDictationCompletionAndFailureLabels() {
-        let model = HermesVoiceCapsuleModel()
-        model.isDictation = true
+        let model = DictationNotchModel()
         XCTAssertEqual(model.title, "Ready")
-        model.phase = .submitting
+        model.phase = .inserting
         XCTAssertEqual(model.title, "Inserting text…")
-        model.phase = .sent
+        model.phase = .inserted
         XCTAssertEqual(model.title, "Text inserted")
         model.phase = .failed("Microphone disconnected")
         XCTAssertEqual(model.title, "Dictation stopped")
         XCTAssertEqual(model.phase.detail, "Microphone disconnected")
-        model.isDictation = false
-        model.phase = .sent
-        XCTAssertEqual(model.title, "Sent to Hermes")
     }
     func testRunnerDrainsLargeOutputAndReturnsTranscript() async throws {
         let directory = try makeTranscriber("print('x' * 100_000)\n    return {'success': True, 'transcript': 'Dictation test'}")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let runner = HermesHandoffRunner()
+        let runner = DictationTranscriptionRunner()
         let text = try await runner.transcribe(audioFile: directory.appendingPathComponent("test.wav"),
             installation: HermesInstallation(rootDirectory: directory, pythonExecutable: URL(fileURLWithPath: "/usr/bin/python3")))
         XCTAssertEqual(text, "Dictation test")
@@ -185,7 +179,7 @@ final class DictationTests: XCTestCase {
     func testRunnerCancellationStopsTranscription() async throws {
         let directory = try makeTranscriber("import time\n    time.sleep(30)\n    return {'success': True, 'transcript': 'Must not insert'}")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let runner = HermesHandoffRunner()
+        let runner = DictationTranscriptionRunner()
         let operation = Task {
             try await runner.transcribe(audioFile: directory.appendingPathComponent("test.wav"),
                 installation: HermesInstallation(rootDirectory: directory, pythonExecutable: URL(fileURLWithPath: "/usr/bin/python3")))
@@ -245,16 +239,16 @@ final class DictationTests: XCTestCase {
     func testRunningRecorderIgnoresUnchangedConfigurationNotification() {
         let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
         let sameFormat = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
-        XCTAssertFalse(HermesAudioRecorder.configurationRequiresStop(
+        XCTAssertFalse(DictationAudioRecorder.configurationRequiresStop(
             isRunning: true, originalFormat: format, currentFormat: sameFormat))
     }
 
     func testRecorderStopsForStoppedEngineOrChangedInputFormat() {
         let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
-        XCTAssertTrue(HermesAudioRecorder.configurationRequiresStop(
+        XCTAssertTrue(DictationAudioRecorder.configurationRequiresStop(
             isRunning: false, originalFormat: format, currentFormat: format))
         let changed = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
-        XCTAssertTrue(HermesAudioRecorder.configurationRequiresStop(
+        XCTAssertTrue(DictationAudioRecorder.configurationRequiresStop(
             isRunning: true, originalFormat: format, currentFormat: changed))
     }
 
@@ -294,10 +288,10 @@ final class DictationTests: XCTestCase {
         let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
         do { _ = try AVAudioFile(forWriting: audio, settings: format.settings) }
         do {
-            _ = try await HermesHandoffRunner().transcribe(audioFile: audio,
+            _ = try await DictationTranscriptionRunner().transcribe(audioFile: audio,
                 installation: HermesInstallation(rootDirectory: directory, pythonExecutable: URL(fileURLWithPath: "/usr/bin/python3")))
             XCTFail("Empty audio was accepted")
-        } catch HermesHandoffError.recordingEmpty {
+        } catch DictationTranscriptionError.recordingEmpty {
             // The recorder failure is kept distinct from a valid recording containing no speech.
         }
     }

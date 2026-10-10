@@ -73,7 +73,7 @@ Notes : Installer merges managed hooks without modifying existing foreign hooks.
 ----
 What : [ Supported Agent: Nous Hermes ]
 How : Monitored via CLI hooks merged into `~/.hermes/config.yaml` and desktop SQLite database watching in `~/.hermes/state.db`. Bridge sanitizes unescaped control characters in JSON streams, normalizes LLM call events, tool execution, and consent requests into canonical events.
-Notes : Supports push-to-talk voice handoff and opt-in strict tool approval.
+Notes : Supports opt-in strict tool approval.
 ----
 What : [ Supported Agent: OpenCode ]
 How : Monitored via an Aegis plugin installed to `~/.config/opencode/plugins/aegis.js` and registered in `~/.config/opencode/opencode.json`. Plugin translates lifecycle, permissions, and question events to the bridge socket, and applies user decisions through OpenCode's local API.
@@ -126,32 +126,6 @@ How : If direct insertion fails (e.g. focused window closed, field inaccessible,
 Notes : Ensures spoken transcripts are never lost when third-party apps misbehave or lose focus.
 ----
 
-## Hermes Voice Handoff
-
-What : [ Hermes Push-to-Talk Voice Handoff ]
-How : Hold `Control-Option-Space`, speak a task prompt, and release. Aegis captures the utterance, transcribes it using Hermes speech tools (`tools.voice_mode.transcribe_recording`), and submits the prompt to Hermes via `hermes chat --query <prompt> --in <working_dir> --source desktop`. Audio files are removed immediately after submission.
-Notes : Renders an animated floating capsule overlay (`HermesVoiceCapsule`) near the notch showing live audio input waveforms and submission status. Prompts are passed via stdin for security.
-----
-What : [ Hermes Voice Target & Directory Selection ]
-How : Allows configuring whether voice handoffs start a fresh Hermes conversation (`New session`) or continue the most recent conversation in that directory (`Latest in folder`, `--resume latest`). Includes a folder picker to choose the default working directory.
-Notes : Configurable in Settings > Integrations > Hermes Voice.
-----
-
-## Ambient Desktop Companion (Mysa)
-
-What : [ Mysa Ambient Desktop Companion ]
-How : An optional transparent desktop sprite panel hosting "Mysa", an ambient pixel-art sentinel that visualizes agent activity states: idle, observing (sessions open), working (thinking or executing tools), attention (pending approval or question), success (transient celebration upon turn completion), and failure (errors).
-Notes : No accounts, streaks, economies, or gamified loops. Animation pauses when occluded, hidden, idle, in Low Power Mode, or when Reduce Motion is enabled. Can be dragged anywhere on desktop; coordinates are persisted across launches.
-----
-What : [ Companion Scale Adjustment ]
-How : Slider in Settings > Appearance allowing continuous scaling of the Mysa sprite from 75% to 150% size.
-Notes : Re-scales the floating panel smoothly without blurring pixel art.
-----
-What : [ Companion Workspace Follow (Spaces) ]
-How : Toggle (`companionFollowsActiveWorkspace`) that sets `NSWindow.collectionBehavior` to `.canJoinAllSpaces`, ensuring Mysa remains visible on your desktop as you navigate between macOS virtual desktops / Spaces.
-Notes : Configurable in Settings > Appearance.
-----
-
 ## Visual Themes & Customization
 
 What : [ Custom Theme: Aegis (Default) ]
@@ -194,7 +168,7 @@ How : Synthesizes multi-partial harmonic sine cues for agent events. Automatical
 Notes : Master volume slider and global sound enable/disable toggle.
 ----
 What : [ Sound Profile: Quiet Glass ]
-How : Clear, airy, high-register synthesized sine-wave notification tones for turn completion, attention/permission, errors, and tool use.
+How : Clear, airy, high-register synthesized sine-wave notification tones for session endings and errors.
 Notes : Clean and unobtrusive for quiet office environments.
 ----
 What : [ Sound Profile: Soft Relay ]
@@ -206,20 +180,20 @@ How : Low, resonant, measured synthesized cues with deep harmonic content and lo
 Notes : Low-pitched cues for subtle notifications.
 ----
 What : [ Sound Profile: Meme ]
-How : Expressive anime reaction audio clips (`yamete-kudasai.aiff` for completion/attention/errors, `brief-action.aiff` for tool use, and `skill-issue.aiff` for repeated tool failures).
+How : Expressive anime reaction audio (`yamete-kudasai.aiff`) for session endings and errors.
 Notes : Bundled inside app resources; falls back gracefully to synthesized tones if audio files are missing.
+----
+What : [ Sound Profile: F1 ]
+How : Formula 1 audio clips for session endings (`completion.aiff`) and errors (`failure.aiff`).
+Notes : Bundled inside app resources with synthesized fallback.
 ----
 What : [ Custom Sound Pack Library & File Import ]
 How : Users can import their own audio files (.wav, .mp3, .m4a, .aiff, .caf) into `~/.aegis/sound-packs/` directly from Settings > Sound. Imported files are automatically resampled to 44.1kHz mono PCM buffers.
 Notes : Includes in-app preview and deletion buttons for imported sound files.
 ----
 What : [ Per-Event Sound Assignment & Volume Control ]
-How : Each lifecycle event (Session start, Session end, Task complete, Tool use, Error, Approval needed, Approval granted, Approval denied, Skill issue) can be independently assigned to Default, Off, or any imported custom audio file, with its own dedicated gain slider (0% to 100%).
-Notes : By default, session start, session end, and tool-use sounds are set to Off to prevent notification fatigue.
-----
-What : [ Skill Issue Detector ]
-How : Tracks tool failures within each session. If the same tool fails 3 times within a 90-second sliding window, detects a "Skill Issue", fires a `skillIssueDetected` event, and plays a dedicated sound cue (`skill-issue.aiff` in Meme profile or descending triad in synthesized profiles).
-Notes : Resets immediately upon successful tool execution or session close.
+How : Each sound event (Session end and Error) can be independently assigned to Default, Off, or any imported custom audio file, with its own dedicated gain slider (0% to 100%).
+Notes : Session-end and error sounds are enabled by default on new installs. Existing custom assignments, Off choices, and volumes for these events are preserved.
 ----
 
 ## Power Management & Keep-Awake
@@ -272,10 +246,6 @@ Notes : Rejects non-canonical events to prevent socket pollution or phantom sess
 What : [ Global Voice Dictation Shortcut ]
 How : Double-press `Shift` (or Left Shift / Right Shift) to start/stop dictation in Toggle mode, or hold `Shift` in Hold mode. Press `Escape` to cancel.
 Notes : Configurable and resettable in Settings > Transcription.
-----
-What : [ Global Hermes Voice Handoff Shortcut ]
-How : Hold `Control-Option-Space`, speak, and release to send task prompt to Hermes.
-Notes : Registered globally via Carbon `RegisterEventHotKey`.
 ----
 What : [ Settings Shortcut ]
 How : Press `Command-,` (Command-Comma) while Aegis is active or selected from menu bar to open Settings window.

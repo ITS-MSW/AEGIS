@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import AVFoundation
 
 // MARK: - Tabs
 
@@ -49,7 +48,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .general:
             return "Launch behavior, agent power, and notch expansion preferences."
         case .appearance:
-            return "Choose the notch theme and ambient companion."
+            return "Choose the notch theme."
         case .integrations:
             return "Manage hooks for the four supported agents."
         case .sound:
@@ -454,55 +453,6 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
 
-        Section {
-            Toggle(isOn: $settingsStore.companionEnabled) {
-                HStack(spacing: 12) {
-                    MysaCompanionPreview()
-                        .frame(width: 44, height: 48)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Show Mysa")
-                        Text("A calm Aegis sentinel for agent state and attention.")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Scale")
-                    Text("Drag Mysa anywhere on your desktop.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                Slider(value: $settingsStore.companionScale, in: 0.75...1.50, step: 0.05)
-                    .frame(width: 170)
-                Text("\(Int((settingsStore.companionScale * 100).rounded()))%")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.secondary)
-                    .frame(width: 38, alignment: .trailing)
-            }
-            .disabled(!settingsStore.companionEnabled)
-
-            Toggle(isOn: $settingsStore.companionFollowsActiveWorkspace) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Follow active workspace")
-                    Text("Keep Mysa visible when you move between desktop spaces.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-            }
-            .disabled(!settingsStore.companionEnabled)
-        } header: {
-            Text("Ambient Companion")
-        } footer: {
-            Text("Mysa reflects idle, observing, working, attention, success, and failure. There are no levels, streaks, or reward loops.")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
     }
 
     // MARK: - Sound
@@ -614,15 +564,8 @@ struct SettingsView: View {
     }
 
     private static let soundEventRows: [(event: SoundEvent, title: String, subtitle: String)] = [
-        (.sessionStart,   "Session start",    "A new agent session begins"),
         (.sessionEnd,     "Session end",      "A session closes"),
-        (.completion,     "Task complete",    "The agent finished its turn"),
-        (.toolUse,        "Tool use",         "The agent runs a tool"),
         (.error,          "Error",            "Tool failure or error"),
-        (.approvalNeeded, "Approval needed",  "Permission or question pending"),
-        (.approvalGranted,"Approval granted", "You allowed an action"),
-        (.approvalDenied, "Approval denied",  "You denied an action"),
-        (.skillIssue,      "Skill issue",      "The same tool failed three times in 90 seconds"),
     ]
 
     @ViewBuilder
@@ -729,71 +672,6 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
 
-        Section {
-            Toggle(isOn: $settingsStore.hermesVoiceHandoffEnabled) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Push-to-Talk handoff")
-                    Text("Hold \(HermesHandoffConfiguration.defaultShortcutLabel), speak, then release to send.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-            }
-
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Destination")
-                    Text("Choose whether each utterance starts fresh or continues the latest session in this folder.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                Picker("", selection: $settingsStore.hermesVoiceTarget) {
-                    ForEach(HermesHandoffTarget.allCases) { target in
-                        Text(target.displayName).tag(target)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 150)
-            }
-            .disabled(!settingsStore.hermesVoiceHandoffEnabled)
-
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Working folder")
-                    Text(abbreviatedPath(settingsStore.hermesVoiceWorkingDirectory))
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(settingsStore.hermesVoiceWorkingDirectory)
-                }
-                Spacer()
-                Button("Choose…") {
-                    chooseHermesWorkingDirectory()
-                }
-            }
-            .disabled(!settingsStore.hermesVoiceHandoffEnabled)
-
-            if AVCaptureDevice.authorizationStatus(for: .audio) == .denied {
-                HStack {
-                    Label("Microphone access is off", systemImage: "mic.slash.fill")
-                        .foregroundColor(.orange)
-                    Spacer()
-                    Button("Open Privacy Settings…") {
-                        openMicrophonePrivacySettings()
-                    }
-                }
-            }
-        } header: {
-            Text("Hermes Voice")
-        } footer: {
-            Text("The microphone is active only while the shortcut is held. Audio is transcribed by your configured Hermes speech provider and removed immediately after the handoff.")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-
         Section("Bridge") {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -809,35 +687,6 @@ struct SettingsView: View {
                     .textSelection(.enabled)
             }
         }
-    }
-
-    private func abbreviatedPath(_ path: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        guard path == home || path.hasPrefix(home + "/") else { return path }
-        return "~" + path.dropFirst(home.count)
-    }
-
-    private func chooseHermesWorkingDirectory() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        panel.prompt = "Choose"
-        let current = NSString(string: settingsStore.hermesVoiceWorkingDirectory).expandingTildeInPath
-        if FileManager.default.fileExists(atPath: current) {
-            panel.directoryURL = URL(fileURLWithPath: current, isDirectory: true)
-        }
-        if panel.runModal() == .OK, let url = panel.url {
-            settingsStore.hermesVoiceWorkingDirectory = url.standardizedFileURL.path
-        }
-    }
-
-    private func openMicrophonePrivacySettings() {
-        guard let url = URL(
-            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
-        ) else { return }
-        NSWorkspace.shared.open(url)
     }
 
     // MARK: - About

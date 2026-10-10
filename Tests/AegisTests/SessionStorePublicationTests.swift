@@ -189,27 +189,6 @@ final class SessionStorePublicationTests: XCTestCase {
         XCTAssertEqual(store.sessions[Self.sessionId]?.activitySummary, "Running command")
     }
 
-    @MainActor
-    func testThreeExplicitSameToolFailuresEmitOneSkillIssueEvent() {
-        let store = SessionStore()
-        var detectedTools: [String] = []
-        let events = store.onEvent.sink { event in
-            if case .skillIssueDetected(_, let toolName) = event {
-                detectedTools.append(toolName)
-            }
-        }
-
-        for _ in 0..<4 {
-            store.handleMessage(
-                message(event: "PostToolUse", toolName: "Bash", toolOutcome: .failure),
-                respond: nil
-            )
-        }
-
-        XCTAssertEqual(detectedTools, ["Bash"])
-        withExtendedLifetime(events) {}
-    }
-
     private static let sessionId = "publication-session"
 
     private func message(

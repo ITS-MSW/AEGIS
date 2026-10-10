@@ -12,7 +12,7 @@ This document explains every permission Aegis requests, why it is needed, how it
 | :--- | :--- | :--- | :--- | :--- |
 | **Accessibility** | Privacy & Security > Accessibility | `AXUIElement`, `AXIsProcessTrusted` | 1. Direct caret-position text insertion during voice dictation.<br>2. Selecting exact session tabs in Hermes Desktop. | Dictation text is copied to clipboard and saved in Settings; Hermes opens frontmost window without selecting the exact tab. |
 | **Input Monitoring** | Privacy & Security > Input Monitoring | `CGEventTap` (`cghidEventTap`) | Detecting global Shift key triggers (`Double-press Shift` or `Hold Shift`) while using other apps. | Shortcut does not fire; dictation cannot be triggered via keyboard. |
-| **Microphone** | Privacy & Security > Microphone | `AVCaptureDevice`, CoreAudio | 1. Capturing audio for voice dictation.<br>2. Capturing audio for Hermes push-to-talk handoff. | Dictation and voice handoff cannot record; surfaces explicit error in the UI. |
+| **Microphone** | Privacy & Security > Microphone | `AVCaptureDevice`, CoreAudio | Capturing audio for voice dictation. | Dictation cannot record; surfaces explicit error in the UI. |
 | **Automation (Apple Events)** | Privacy & Security > Automation | AppleScript, `NSAppleScript` | Scripting `System Events` to drive Hermes Desktop and terminal tabs. | Window activates to the front without sub-element targeting. |
 | **Power Management** | *No user prompt required* | IOKit (`IOPMAssertion`) | Preventing system idle sleep while coding agents are executing tasks. | System follows standard OS sleep timer. |
 
@@ -30,7 +30,6 @@ This document explains every permission Aegis requests, why it is needed, how it
 
 ### Input Monitoring (`CGEventTap`)
 - **Why It's Needed**:
-  - Standard macOS global hotkeys (Carbon `RegisterEventHotKey`) require a modifier plus a normal key (e.g. `Control-Option-Space`).
   - Aegis's dictation shortcut uses pure modifier taps: `Double-press Shift` or `Hold Shift`. Detecting modifier key presses while working in other applications requires a passive `CGEventTap` listening for `flagsChanged` events.
 - **Safety Safeguards**:
   - The event tap is passive (`listenOnly`) and does not modify or intercept standard keystrokes.
@@ -38,7 +37,7 @@ This document explains every permission Aegis requests, why it is needed, how it
 
 ### Microphone (`AVCaptureDevice`)
 - **Why It's Needed**:
-  - Records speech when dictation is active or while `Control-Option-Space` is held for Hermes voice handoff.
+  - Records speech when dictation is active.
   - Uses the hardware's native format and CoreAudio device resolution.
 - **Safety Safeguards**:
   - The microphone is active **only** while recording is visibly engaged.
@@ -127,5 +126,4 @@ tccutil reset Microphone dev.aegis.app
 
 - **100% Local IPC**: All agent communication flows over the local Unix domain socket (`/tmp/aegis.sock`). No agent data or code snippets are transmitted across external networks.
 - **Zero Analytics / Telemetry**: Aegis includes no telemetry SDKs, usage trackers, or third-party monitoring services.
-- **Prompt Privacy**: Task prompts submitted via Hermes Voice Handoff are streamed directly through standard input (`stdin`), preventing private prompts from leaking into system process lists (`ps`) or shell history.
 - **Ephemeral Audio**: Dictation and voice recordings exist only in memory or temporary files for the duration of the speech-to-text call and are purged immediately afterward.

@@ -10,9 +10,9 @@ final class DictationController {
     private let shortcut = GlobalDictationShortcut()
     private var audio = DictationAudio()
     private let outputMute = DictationOutputMute()
-    private let runner = HermesHandoffRunner()
-    private let model = HermesVoiceCapsuleModel()
-    private lazy var capsule = HermesVoiceCapsuleWindowController(model: model)
+    private let runner = DictationTranscriptionRunner()
+    private let model = DictationNotchModel()
+    private lazy var capsule = DictationNotchWindowController(model: model)
     private var subscriptions = Set<AnyCancellable>()
     private(set) var operation: Task<Void, Never>?
     private var timeout: Task<Void, Never>?
@@ -27,11 +27,10 @@ final class DictationController {
     private var enabled = false
 
     init(settings: SettingsStore, preparationLimit: Duration = .seconds(10),
-         requestMicrophone: @escaping () async -> Bool = HermesMicrophonePermission.request) {
+         requestMicrophone: @escaping () async -> Bool = DictationMicrophonePermission.request) {
         self.preparationLimit = preparationLimit
         self.requestMicrophone = requestMicrophone
         self.settings = settings
-        model.isDictation = true
     }
 
     func start() {
@@ -131,7 +130,6 @@ final class DictationController {
         requesting = true
         model.phase = .requestingPermission
         model.level = 0
-        model.projectName = "Dictation"
         settings.dictationStatus = "Preparing microphone…"
         timeout = Task { [weak self] in
             guard let self else { return }
@@ -147,16 +145,15 @@ final class DictationController {
                 Log.info("Dictation preparation stage=permission")
                 let granted = await requestMicrophone()
                 guard token == generation, !Task.isCancelled else { return }
-                guard granted else { throw HermesHandoffError.microphoneDenied }
+                guard granted else { throw DictationTranscriptionError.microphoneDenied }
                 let preference = settings.dictationMicrophoneID
                 Log.info("Dictation preparation stage=devices")
                 let devices = await Task.detached { DictationMicrophone.available() }.value
                 guard token == generation, !Task.isCancelled else { return }
                 guard let device = DictationMicrophone.resolve(preference: preference, devices: devices) else {
-                    throw HermesHandoffError.microphoneUnavailable
+                    throw DictationTranscriptionError.microphoneUnavailable
                 }
                 activeDevice = device.id
-                model.projectName = device.name
                 if settings.dictationMuteWhileRecording {
                     Log.info("Dictation preparation stage=mute-output")
                     try outputMute.mute()
@@ -171,7 +168,7 @@ final class DictationController {
                     Task { @MainActor in
                         guard let self, token == self.generation else { return }
                         self.cancel()
-                        self.fail(HermesHandoffError.recordingFailed)
+                        self.fail(DictationTranscriptionError.recordingFailed)
                     }
                 })
                 guard token == generation, !Task.isCancelled else { return }
@@ -213,9 +210,9 @@ final class DictationController {
             do {
                 let recordedFile = await audio.stop()
                 restoreOutputSound()
-                guard let file = recordedFile, duration >= 0.25 else { throw HermesHandoffError.noSpeech }
-                guard let installation = await Task.detached(operation: { HermesHandoffConfiguration.installation() }).value else {
-                    throw HermesHandoffError.installationMissing
+                guard let file = recordedFile, duration >= 0.25 else { throw DictationTranscriptionError.noSpeech }
+                guard let installation = await Task.detached(operation: { DictationTranscriptionConfiguration.installation() }).value else {
+                    throw DictationTranscriptionError.installationMissing
                 }
                 let transcript = try await runner.transcribe(audioFile: file, installation: installation)
                 try Task.checkCancellation()
@@ -224,12 +221,12 @@ final class DictationController {
                     guard let target else {
                         throw DictationFailure(message: targetFailure ?? "There was no text field selected when recording started.")
                     }
-                    model.phase = .submitting
+                    model.phase = .inserting
                     let verified = try await target.insert(transcript, requiresSettling: destinationNeedsSettling)
                     try Task.checkCancellation()
                     guard token == generation else { return }
                     if !verified { DictationTranscriptController.shared.retain(transcript) }
-                    model.phase = verified ? .sent : .pasteUnverified
+                    model.phase = verified ? .inserted : .pasteUnverified
                     settings.dictationStatus = verified ? "Text inserted" : "Paste sent. Check the field; your transcript is saved in Transcription settings."
                     dismiss(after: 1.2)
                 } catch {
@@ -306,7 +303,7 @@ final class DictationController {
     }
 }
 
-enum HermesMicrophonePermission {
+enum DictationMicrophonePermission {
     static func request() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized: return true

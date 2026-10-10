@@ -5,7 +5,6 @@ import Combine
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notchWindowController: NotchWindowController?
-    private var companionWindowController: CompanionWindowController?
     private var menuBarManager: MenuBarManager?
     private var onboardingController: OnboardingWindowController?
     private var whatsNewController: WhatsNewWindowController?
@@ -15,7 +14,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settingsStore = SettingsStore()
     private let executionPowerController = AgentExecutionPowerController()
     private let systemPowerConditionMonitor = SystemPowerConditionMonitor()
-    private lazy var hermesVoiceHandoffController = HermesVoiceHandoffController(settingsStore: settingsStore)
     private lazy var dictationController = DictationController(settings: settingsStore)
     private let rateLimitStore = RateLimitStore()
     private let codexDesktopWatcher = CodexDesktopSessionWatcher()
@@ -42,7 +40,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] event in
                 self?.soundEngine.play(event)
                 self?.notchWindowController?.handleSessionEvent(event)
-                self?.companionWindowController?.handleSessionEvent(event)
             }
             .store(in: &cancellables)
 
@@ -97,12 +94,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             rateLimitStore: rateLimitStore
         )
         notchWindowController?.showWindow(nil)
-        settingsStore.$companionEnabled
-            .removeDuplicates()
-            .sink { [weak self] enabled in
-                self?.reconcileCompanionWindow(isEnabled: enabled)
-            }
-            .store(in: &cancellables)
         let screen = ScreenDetector.notchScreen
         Log.info("Notch window shown, frame: \(notchWindowController?.window?.frame ?? .zero)")
         Log.info("Screen frame: \(screen.frame)")
@@ -150,7 +141,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.sessionStore.handleMessage(message, respond: nil, origin: .durableProviderState)
         }
         hermesDesktopWatcher.start()
-        hermesVoiceHandoffController.start()
         dictationController.start()
 
         // Never activate a first-run window automatically: the notch is a
@@ -163,30 +153,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     }
 
-    private func reconcileCompanionWindow(isEnabled: Bool) {
-        switch CompanionWindowLifecyclePolicy.action(
-            isEnabled: isEnabled,
-            hasController: companionWindowController != nil
-        ) {
-        case .create:
-            companionWindowController = CompanionWindowController(
-                sessionStore: sessionStore,
-                settingsStore: settingsStore
-            )
-        case .destroy:
-            companionWindowController?.close()
-            companionWindowController = nil
-        case .none:
-            break
-        }
-    }
-
     func applicationWillTerminate(_ notification: Notification) {
         executionPowerController.stop()
         systemPowerConditionMonitor.stop()
         codexDesktopWatcher.stop()
         hermesDesktopWatcher.stop()
-        hermesVoiceHandoffController.stop()
         dictationController.stop()
         socketServer.stop()
         soundEngine.shutdown()

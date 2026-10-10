@@ -28,32 +28,6 @@ final class SettingsStore: ObservableObject {
 
     func resetDictationShortcut() { dictationShiftKey = .either }
 
-    @Published var companionEnabled: Bool {
-        didSet { UserDefaults.standard.set(companionEnabled, forKey: "companionEnabled") }
-    }
-    @Published var companionScale: Double {
-        didSet {
-            let clamped = min(max(companionScale, 0.75), 1.50)
-            UserDefaults.standard.set(clamped, forKey: "companionScale")
-        }
-    }
-    @Published var companionFollowsActiveWorkspace: Bool {
-        didSet {
-            UserDefaults.standard.set(
-                companionFollowsActiveWorkspace,
-                forKey: "companionFollowsActiveWorkspace"
-            )
-        }
-    }
-    @Published var hermesVoiceHandoffEnabled: Bool {
-        didSet { UserDefaults.standard.set(hermesVoiceHandoffEnabled, forKey: "hermesVoiceHandoffEnabled") }
-    }
-    @Published var hermesVoiceWorkingDirectory: String {
-        didSet { UserDefaults.standard.set(hermesVoiceWorkingDirectory, forKey: "hermesVoiceWorkingDirectory") }
-    }
-    @Published var hermesVoiceTarget: HermesHandoffTarget {
-        didSet { UserDefaults.standard.set(hermesVoiceTarget.rawValue, forKey: "hermesVoiceTarget") }
-    }
     @Published var soundEnabled: Bool {
         didSet { UserDefaults.standard.set(soundEnabled, forKey: "soundEnabled") }
     }
@@ -191,19 +165,8 @@ final class SettingsStore: ObservableObject {
         dictationShiftKey = DictationShiftKey(rawValue: defaults.string(forKey: "dictationShiftKey") ?? "") ?? .either
         dictationMuteWhileRecording = defaults.bool(forKey: "dictationMuteWhileRecording")
         dictationMicrophoneID = defaults.string(forKey: "dictationMicrophoneID") ?? ""
-        let preferredHermesDirectory = HermesHandoffConfiguration.preferredWorkingDirectory(
-            homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
-            fileExists: { FileManager.default.fileExists(atPath: $0.path) }
-        ).path
-
         // Register defaults
         defaults.register(defaults: [
-            "companionEnabled": false,
-            "companionScale": 1.0,
-            "companionFollowsActiveWorkspace": true,
-            "hermesVoiceHandoffEnabled": true,
-            "hermesVoiceWorkingDirectory": preferredHermesDirectory,
-            "hermesVoiceTarget": HermesHandoffTarget.newSession.rawValue,
             "soundEnabled": true,
             "soundVolume": Float(0.7),
             "soundProfile": SoundProfile.quietGlass.rawValue,
@@ -213,24 +176,11 @@ final class SettingsStore: ObservableObject {
             "keepAwakeMode": AgentKeepAwakeMode.off.rawValue,
             "launchAtLogin": false,
             "hasCompletedOnboarding": false,
-            "soundSessionStart": false,
-            "soundCompletion": true,
-            "soundToolUse": false,
             "soundError": true,
-            "soundPermission": true,
             "notchThemeID": NotchThemeID.aegis.rawValue,
             "hasSeenThemeOnboarding": false,
         ])
 
-        self.companionEnabled = defaults.bool(forKey: "companionEnabled")
-        self.companionScale = min(max(defaults.double(forKey: "companionScale"), 0.75), 1.50)
-        self.companionFollowsActiveWorkspace = defaults.bool(forKey: "companionFollowsActiveWorkspace")
-        self.hermesVoiceHandoffEnabled = defaults.bool(forKey: "hermesVoiceHandoffEnabled")
-        self.hermesVoiceWorkingDirectory = defaults.string(forKey: "hermesVoiceWorkingDirectory")
-            ?? preferredHermesDirectory
-        self.hermesVoiceTarget = HermesHandoffTarget(
-            rawValue: defaults.string(forKey: "hermesVoiceTarget") ?? ""
-        ) ?? .newSession
         self.soundEnabled = defaults.bool(forKey: "soundEnabled")
         self.soundVolume = defaults.float(forKey: "soundVolume")
         let storedSoundProfile = defaults.string(forKey: "soundProfile")
@@ -246,37 +196,22 @@ final class SettingsStore: ObservableObject {
         ) ?? .off
         self.launchAtLogin = defaults.bool(forKey: "launchAtLogin")
         self.hasCompletedOnboarding = defaults.bool(forKey: "hasCompletedOnboarding")
-        // Load per-event assignments, or migrate once from the old toggles
-        // (a `false` toggle → "off"). The old keys stay registered above so
-        // this read returns correct defaults for fresh installs too.
-        var assignments: [String: String]
+        // Keep only active events, preserving their custom sounds and Off choices.
         if let data = defaults.data(forKey: "soundAssignments"),
            let map = try? JSONDecoder().decode([String: String].self, from: data) {
-            assignments = map
+            self.soundAssignments = map.filter { SoundEvent(rawValue: $0.key) != nil }
         } else {
-            var m: [String: String] = [:]
-            if !defaults.bool(forKey: "soundSessionStart") { m["session-start"] = "off"; m["session-end"] = "off" }
-            if !defaults.bool(forKey: "soundCompletion") { m["completion"] = "off" }
-            if !defaults.bool(forKey: "soundToolUse") { m["tool-use"] = "off" }
-            if !defaults.bool(forKey: "soundError") { m["error"] = "off" }
-            if !defaults.bool(forKey: "soundPermission") {
-                m["approval-needed"] = "off"; m["approval-granted"] = "off"; m["approval-denied"] = "off"
+            var assignments: [String: String] = [:]
+            if let enabled = defaults.object(forKey: "soundSessionStart") as? Bool, !enabled {
+                assignments[SoundEvent.sessionEnd.rawValue] = "off"
             }
-            assignments = m
+            if !defaults.bool(forKey: "soundError") { assignments[SoundEvent.error.rawValue] = "off" }
+            self.soundAssignments = assignments
         }
-        // Calm palette defaults to meaningful notifications only. Preserve
-        // custom files and explicit Off choices while silencing legacy default
-        // start/end chatter once for existing installs.
-        if defaults.integer(forKey: "builtInSoundVersion") < 2 {
-            for key in ["session-start", "session-end"] where assignments[key] == nil || assignments[key] == "default" {
-                assignments[key] = "off"
-            }
-            defaults.set(2, forKey: "builtInSoundVersion")
-        }
-        self.soundAssignments = assignments
         if let data = defaults.data(forKey: "soundEventVolumes"),
            let map = try? JSONDecoder().decode([String: Float].self, from: data) {
-            self.soundEventVolumes = map.mapValues { max(0, min(1, $0)) }
+            self.soundEventVolumes = map.filter { SoundEvent(rawValue: $0.key) != nil }
+                .mapValues { max(0, min(1, $0)) }
         } else {
             self.soundEventVolumes = [:]
         }
@@ -296,6 +231,8 @@ final class SettingsStore: ObservableObject {
         } else {
             self.strictApproval = [:]
         }
+        defaults.set(try? JSONEncoder().encode(soundAssignments), forKey: "soundAssignments")
+        defaults.set(try? JSONEncoder().encode(soundEventVolumes), forKey: "soundEventVolumes")
         // Mirror to the bridge config on launch so it reflects the saved state.
         writeBridgeConfig()
         if launchAtLogin { updateLoginItem() }

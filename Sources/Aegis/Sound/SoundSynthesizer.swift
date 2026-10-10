@@ -6,6 +6,7 @@ enum SoundProfile: String, CaseIterable, Identifiable, Hashable {
     case softRelay = "soft-relay"
     case deepSignal = "deep-signal"
     case meme
+    case f1
 
     var id: String { rawValue }
 
@@ -15,6 +16,7 @@ enum SoundProfile: String, CaseIterable, Identifiable, Hashable {
         case .softRelay: return "Soft Relay"
         case .deepSignal: return "Deep Signal"
         case .meme: return "Meme"
+        case .f1: return "F1"
         }
     }
 
@@ -27,7 +29,9 @@ enum SoundProfile: String, CaseIterable, Identifiable, Hashable {
         case .deepSignal:
             return "Low, deliberate cues with a measured finish."
         case .meme:
-            return "Unhinged anime reactions for every agent state."
+            return "Anime reactions for session endings and errors."
+        case .f1:
+            return "Formula 1 sounds and team radio for finishes and failures."
         }
     }
 
@@ -35,55 +39,25 @@ enum SoundProfile: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .meme:
             return "sounds/meme"
+        case .f1:
+            return "sounds/f1"
         case .quietGlass, .softRelay, .deepSignal:
             return nil
         }
     }
 
     func bundledSoundName(for event: SoundEvent) -> String? {
-        guard self == .meme else { return nil }
-
-        switch event {
-        case .sessionStart, .toolUse:
-            return "brief-action"
-        case .skillIssue:
-            return "skill-issue"
-        case .sessionEnd, .completion, .error,
-             .approvalNeeded, .approvalGranted, .approvalDenied:
-            return "yamete-kudasai"
-        }
-    }
-
-    var previewEvents: [SoundEvent] {
         switch self {
+        case .f1:
+            return event == .sessionEnd ? "completion" : "failure"
         case .meme:
-            return [.completion, .sessionStart, .skillIssue]
+            return "yamete-kudasai"
         case .quietGlass, .softRelay, .deepSignal:
-            return [.completion, .approvalNeeded, .error]
+            return nil
         }
     }
-}
 
-enum SoundCue: String, Equatable {
-    case completion
-    case attention
-    case failure
-    case skillIssue
-}
-
-extension SoundEvent {
-    var cue: SoundCue {
-        switch self {
-        case .sessionEnd, .completion, .approvalGranted:
-            return .completion
-        case .sessionStart, .toolUse, .approvalNeeded:
-            return .attention
-        case .error, .approvalDenied:
-            return .failure
-        case .skillIssue:
-            return .skillIssue
-        }
-    }
+    var previewEvents: [SoundEvent] { [.sessionEnd, .error] }
 }
 
 /// Generates short notification tones from profile-owned oscillator, pitch,
@@ -97,7 +71,7 @@ struct SoundSynthesizer {
     }
 
     func generateSound(for event: SoundEvent) -> AVAudioPCMBuffer? {
-        render(preset(for: event.cue))
+        render(preset(for: event))
     }
 
     private struct Voice {
@@ -128,9 +102,11 @@ struct SoundSynthesizer {
         let envelope: Envelope
     }
 
-    private func preset(for cue: SoundCue) -> CuePreset {
-        switch (profile, cue) {
-        case (.quietGlass, .completion):
+    private func preset(for event: SoundEvent) -> CuePreset {
+        switch (profile, event) {
+        case (.f1, _):
+            return SoundSynthesizer(profile: .quietGlass).preset(for: event)
+        case (.quietGlass, .sessionEnd):
             return CuePreset(
                 duration: 0.46,
                 voices: [
@@ -139,16 +115,7 @@ struct SoundSynthesizer {
                 ],
                 envelope: Envelope(attack: 0.012, release: 0.08, decay: 2.4)
             )
-        case (.quietGlass, .attention):
-            return CuePreset(
-                duration: 0.40,
-                voices: [
-                    Voice(659.25, start: 0.00, duration: 0.26, gain: 0.080, brightness: 0.28),
-                    Voice(880.00, start: 0.11, duration: 0.25, gain: 0.070, brightness: 0.25),
-                ],
-                envelope: Envelope(attack: 0.012, release: 0.08, decay: 2.4)
-            )
-        case (.quietGlass, .failure):
+        case (.quietGlass, .error):
             return CuePreset(
                 duration: 0.32,
                 voices: [
@@ -157,18 +124,7 @@ struct SoundSynthesizer {
                 ],
                 envelope: Envelope(attack: 0.012, release: 0.08, decay: 2.4)
             )
-        case (.quietGlass, .skillIssue):
-            return CuePreset(
-                duration: 0.58,
-                voices: [
-                    Voice(987.77, start: 0.00, duration: 0.22, gain: 0.080, brightness: 0.50),
-                    Voice(739.99, start: 0.14, duration: 0.22, gain: 0.072, brightness: 0.42),
-                    Voice(554.37, start: 0.28, duration: 0.24, gain: 0.066, brightness: 0.36),
-                ],
-                envelope: Envelope(attack: 0.012, release: 0.09, decay: 2.2)
-            )
-
-        case (.softRelay, .completion):
+        case (.softRelay, .sessionEnd):
             return CuePreset(
                 duration: 0.46,
                 voices: [
@@ -177,16 +133,7 @@ struct SoundSynthesizer {
                 ],
                 envelope: Envelope(attack: 0.020, release: 0.12, decay: 1.8)
             )
-        case (.softRelay, .attention):
-            return CuePreset(
-                duration: 0.40,
-                voices: [
-                    Voice(440.00, start: 0.00, duration: 0.30, gain: 0.070, brightness: 0.16),
-                    Voice(587.33, start: 0.11, duration: 0.25, gain: 0.052, brightness: 0.12),
-                ],
-                envelope: Envelope(attack: 0.020, release: 0.12, decay: 1.8)
-            )
-        case (.softRelay, .failure):
+        case (.softRelay, .error):
             return CuePreset(
                 duration: 0.32,
                 voices: [
@@ -195,18 +142,7 @@ struct SoundSynthesizer {
                 ],
                 envelope: Envelope(attack: 0.020, release: 0.12, decay: 1.8)
             )
-        case (.softRelay, .skillIssue):
-            return CuePreset(
-                duration: 0.56,
-                voices: [
-                    Voice(659.25, start: 0.00, duration: 0.25, gain: 0.070, brightness: 0.20),
-                    Voice(493.88, start: 0.13, duration: 0.25, gain: 0.062, brightness: 0.16),
-                    Voice(369.99, start: 0.27, duration: 0.23, gain: 0.056, brightness: 0.12),
-                ],
-                envelope: Envelope(attack: 0.020, release: 0.12, decay: 1.7)
-            )
-
-        case (.deepSignal, .completion):
+        case (.deepSignal, .sessionEnd):
             return CuePreset(
                 duration: 0.46,
                 voices: [
@@ -215,16 +151,7 @@ struct SoundSynthesizer {
                 ],
                 envelope: Envelope(attack: 0.026, release: 0.16, decay: 1.5)
             )
-        case (.deepSignal, .attention):
-            return CuePreset(
-                duration: 0.40,
-                voices: [
-                    Voice(329.63, start: 0.00, duration: 0.30, gain: 0.082, brightness: 0.14),
-                    Voice(493.88, start: 0.11, duration: 0.24, gain: 0.056, brightness: 0.11),
-                ],
-                envelope: Envelope(attack: 0.026, release: 0.16, decay: 1.5)
-            )
-        case (.deepSignal, .failure):
+        case (.deepSignal, .error):
             return CuePreset(
                 duration: 0.32,
                 voices: [
@@ -233,21 +160,7 @@ struct SoundSynthesizer {
                 ],
                 envelope: Envelope(attack: 0.026, release: 0.16, decay: 1.5)
             )
-        case (.deepSignal, .skillIssue):
-            return CuePreset(
-                duration: 0.60,
-                voices: [
-                    Voice(329.63, start: 0.00, duration: 0.28, gain: 0.082, brightness: 0.14),
-                    Voice(246.94, start: 0.15, duration: 0.26, gain: 0.072, brightness: 0.11),
-                    Voice(185.00, start: 0.30, duration: 0.24, gain: 0.064, brightness: 0.08),
-                ],
-                envelope: Envelope(attack: 0.026, release: 0.16, decay: 1.4)
-            )
-
-        // The bundled voice clips are the primary cues for this profile. These
-        // light fallback tones keep notifications functional if an app bundle
-        // is copied without its resources.
-        case (.meme, .completion):
+        case (.meme, .sessionEnd):
             return CuePreset(
                 duration: 0.50,
                 voices: [
@@ -256,16 +169,7 @@ struct SoundSynthesizer {
                 ],
                 envelope: Envelope(attack: 0.014, release: 0.10, decay: 1.9)
             )
-        case (.meme, .attention):
-            return CuePreset(
-                duration: 0.44,
-                voices: [
-                    Voice(698.46, start: 0.00, duration: 0.27, gain: 0.085, brightness: 0.34),
-                    Voice(932.33, start: 0.12, duration: 0.27, gain: 0.075, brightness: 0.36),
-                ],
-                envelope: Envelope(attack: 0.014, release: 0.10, decay: 1.9)
-            )
-        case (.meme, .failure):
+        case (.meme, .error):
             return CuePreset(
                 duration: 0.36,
                 voices: [
@@ -273,16 +177,6 @@ struct SoundSynthesizer {
                     Voice(440.00, start: 0.08, duration: 0.24, gain: 0.070, brightness: 0.24),
                 ],
                 envelope: Envelope(attack: 0.014, release: 0.10, decay: 1.9)
-            )
-        case (.meme, .skillIssue):
-            return CuePreset(
-                duration: 0.62,
-                voices: [
-                    Voice(880.00, start: 0.00, duration: 0.24, gain: 0.090, brightness: 0.42),
-                    Voice(659.25, start: 0.16, duration: 0.24, gain: 0.080, brightness: 0.36),
-                    Voice(493.88, start: 0.32, duration: 0.24, gain: 0.072, brightness: 0.30),
-                ],
-                envelope: Envelope(attack: 0.014, release: 0.10, decay: 1.8)
             )
         }
     }

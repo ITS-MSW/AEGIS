@@ -92,7 +92,7 @@ final class DictationMicrophoneMonitor: ObservableObject {
 }
 
 actor DictationAudio {
-    private let recorder = HermesAudioRecorder()
+    private let recorder = DictationAudioRecorder()
     func start(device: AudioDeviceID, level: @escaping (Double) -> Void, failure: @escaping () -> Void) throws {
         try Task.checkCancellation()
         _ = try recorder.start(deviceID: device, levelHandler: level, failureHandler: failure)
