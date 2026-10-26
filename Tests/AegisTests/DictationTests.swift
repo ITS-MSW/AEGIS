@@ -208,7 +208,10 @@ final class DictationTests: XCTestCase {
         let provider = NSItemProvider(object: url as NSURL)
         XCTAssertTrue(provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier))
         XCTAssertEqual(DictationPermission.accessibility.settingsURL.fragment, nil)
-        XCTAssertEqual(DictationPermission.accessibility.settingsURL.query, "Privacy_Accessibility")
+        XCTAssertEqual(
+            DictationPermission.accessibility.settingsURL.absoluteString,
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        )
     }
 
     func testRunningRecorderIgnoresUnchangedConfigurationNotification() {
