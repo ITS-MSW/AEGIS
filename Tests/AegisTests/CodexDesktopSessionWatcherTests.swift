@@ -23,7 +23,7 @@ final class CodexDesktopSessionWatcherTests: XCTestCase {
         let visibleEvent = expectation(description: "visible subagent event")
         let store = SessionStore()
         watcher.onMessage = { message in
-            store.handleMessage(message, respond: nil)
+            store.handleMessage(message)
             if message.userMessage == nil {
                 hiddenEvent.fulfill()
             } else {

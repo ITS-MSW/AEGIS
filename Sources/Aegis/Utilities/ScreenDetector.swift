@@ -1,11 +1,6 @@
 import AppKit
 
 struct ScreenDetector {
-    /// True whenever macOS currently exposes more than one active display.
-    static var hasSecondaryDisplay: Bool {
-        NSScreen.screens.count > 1
-    }
-
     /// Returns the screen that has a notch, or the main screen as fallback.
     static var notchScreen: NSScreen {
         // The built-in display with a notch has safeAreaInsets.top > 0
@@ -39,7 +34,6 @@ struct ScreenDetector {
 
     /// Frame for centering a notch panel on the target screen.
     /// The panel's top edge = screen top, so it overlaps the notch area.
-    /// Content inside the panel adds top padding to sit below the physical notch.
     static func notchPanelFrame(panelSize: NSSize) -> NSRect {
         let screen = notchScreen
         let screenFrame = screen.frame

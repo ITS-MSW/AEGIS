@@ -3,25 +3,23 @@ import XCTest
 
 final class EphemeralSessionTests: XCTestCase {
     @MainActor
-    func testEphemeralActivityNeverCreatesCardsEvenWithSubagentsEnabled() {
+    func testEphemeralActivityNeverCreatesSessionsEvenWithSubagentsEnabled() {
         let store = SessionStore()
         store.setShowsSubagents(true)
         for event in ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"] {
-            store.handleMessage(BridgeMessage(sessionId: "internal", hookEvent: event, source: "codex", isEphemeral: true), respond: nil)
+            store.handleMessage(BridgeMessage(sessionId: "internal", hookEvent: event, source: "codex", isEphemeral: true))
             XCTAssertTrue(store.sessions.isEmpty)
         }
-        store.handleMessage(BridgeMessage(sessionId: "user", hookEvent: "UserPromptSubmit", source: "codex"), respond: nil)
+        store.handleMessage(BridgeMessage(sessionId: "user", hookEvent: "UserPromptSubmit", source: "codex"))
         XCTAssertNotNil(store.activeSessions["user"])
     }
 
     @MainActor
-    func testEphemeralPermissionRemainsActionableThenIsRemovedOnProgress() {
+    func testEphemeralPermissionRemainsVisibleThenIsRemovedOnProgress() {
         let store = SessionStore()
-        var responded = false
-        store.handleMessage(BridgeMessage(sessionId: "internal", hookEvent: "PermissionRequest", toolName: "Bash", source: "codex", isEphemeral: true), respond: { _ in responded = true })
-        XCTAssertNotNil(store.sessions["internal"]?.pendingPermission)
-        store.handleMessage(BridgeMessage(sessionId: "internal", hookEvent: "PostToolUse", source: "codex"), respond: nil)
-        XCTAssertTrue(responded)
+        store.handleMessage(BridgeMessage(sessionId: "internal", hookEvent: "PermissionRequest", toolName: "Bash", source: "codex", isEphemeral: true))
+        XCTAssertEqual(store.sessions["internal"]?.status, .waitingPermission)
+        store.handleMessage(BridgeMessage(sessionId: "internal", hookEvent: "PostToolUse", source: "codex"))
         XCTAssertNil(store.sessions["internal"])
     }
 }

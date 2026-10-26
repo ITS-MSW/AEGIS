@@ -15,7 +15,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let executionPowerController = AgentExecutionPowerController()
     private let systemPowerConditionMonitor = SystemPowerConditionMonitor()
     private lazy var dictationController = DictationController(settings: settingsStore)
-    private let rateLimitStore = RateLimitStore()
     private let codexDesktopWatcher = CodexDesktopSessionWatcher()
     private let hermesDesktopWatcher = HermesDesktopSessionWatcher()
     private var cancellables = Set<AnyCancellable>()
@@ -30,16 +29,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
 
         // Wire up socket → session store → sound
-        socketServer.onMessage = { [weak self] message, respond, respondRaw in
+        socketServer.onMessage = { [weak self] message in
             guard let self else { return }
             Log.info("Received: \(message.hookEvent) session=\(message.sessionId.prefix(8))")
-            self.sessionStore.handleMessage(message, respond: respond, respondRaw: respondRaw)
+            self.sessionStore.handleMessage(message)
         }
 
         sessionStore.onEvent
             .sink { [weak self] event in
                 self?.soundEngine.play(event)
-                self?.notchWindowController?.handleSessionEvent(event)
             }
             .store(in: &cancellables)
 
@@ -90,12 +88,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Create notch window
         notchWindowController = NotchWindowController(
             sessionStore: sessionStore,
-            settingsStore: settingsStore,
-            rateLimitStore: rateLimitStore
+            settingsStore: settingsStore
         )
-        notchWindowController?.showWindow(nil)
         let screen = ScreenDetector.notchScreen
-        Log.info("Notch window shown, frame: \(notchWindowController?.window?.frame ?? .zero)")
+        Log.info("Notch panel initialized, frame: \(notchWindowController?.window?.frame ?? .zero)")
         Log.info("Screen frame: \(screen.frame)")
         Log.info("Screen visibleFrame: \(screen.visibleFrame)")
         Log.info("SafeAreaInsets: top=\(screen.safeAreaInsets.top) bottom=\(screen.safeAreaInsets.bottom)")
@@ -105,7 +101,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Menu bar
         menuBarManager = MenuBarManager(
             settingsStore: settingsStore,
-            sessionStore: sessionStore,
             onReloadSounds: { [weak self] in self?.soundEngine.reloadSounds() },
             onPreviewEvent: { [weak self] ev in self?.soundEngine.preview(ev) },
             onPreviewProfile: { [weak self] profile in self?.soundEngine.previewProfile(profile) },
@@ -132,13 +127,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         codexDesktopWatcher.onMessage = { [weak self] message in
             Log.info("Codex Desktop: \(message.hookEvent) session=\(message.sessionId.prefix(8))")
-            self?.sessionStore.handleMessage(message, respond: nil)
+            self?.sessionStore.handleMessage(message)
         }
         codexDesktopWatcher.start()
 
         hermesDesktopWatcher.onMessage = { [weak self] message in
             Log.info("Hermes Desktop: \(message.hookEvent) session=\(message.sessionId.prefix(8))")
-            self?.sessionStore.handleMessage(message, respond: nil, origin: .durableProviderState)
+            self?.sessionStore.handleMessage(message, origin: .durableProviderState)
         }
         hermesDesktopWatcher.start()
         dictationController.start()
@@ -170,7 +165,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let dirs = [
             home.appendingPathComponent(".aegis/bin"),
             home.appendingPathComponent(".aegis/run"),
-            home.appendingPathComponent(".aegis/cache"),
             home.appendingPathComponent(".aegis/sound-packs"),
         ]
         for dir in dirs {

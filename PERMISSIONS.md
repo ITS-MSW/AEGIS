@@ -1,6 +1,6 @@
 # AEGIS macOS Permissions & Security Guide
 
-Aegis is a native macOS utility that monitors AI coding agents, performs global voice dictation, automates window/tab switching, and prevents idle sleep while tasks execute. To deliver these capabilities, Aegis interacts with several macOS security and privacy subsystems (Transparency, Consent, and Control — TCC).
+Aegis is a native macOS utility that monitors AI coding agents, performs global voice dictation and prevents idle sleep while tasks execute. To deliver these capabilities, Aegis interacts with several macOS security and privacy subsystems (Transparency, Consent, and Control — TCC).
 
 This document explains every permission Aegis requests, why it is needed, how it is handled, and how to avoid permission churn during development.
 
@@ -10,10 +10,9 @@ This document explains every permission Aegis requests, why it is needed, how it
 
 | Permission Subsystem | System Setting | API / Framework | Core Aegis Capabilities | Fallback if Denied |
 | :--- | :--- | :--- | :--- | :--- |
-| **Accessibility** | Privacy & Security > Accessibility | `AXUIElement`, `AXIsProcessTrusted` | 1. Pasting into the focused input during voice dictation.<br>2. Selecting exact session tabs in Hermes Desktop. | Dictation copies to the clipboard; Hermes opens frontmost window without selecting the exact tab. |
+| **Accessibility** | Privacy & Security > Accessibility | `AXUIElement`, `AXIsProcessTrusted` | Pasting into the focused input during voice dictation. | Dictation copies to the clipboard. |
 | **Input Monitoring** | Privacy & Security > Input Monitoring | `CGEventTap` (`cghidEventTap`) | Detecting global Shift key triggers (`Press Shift`, `Double-press Shift` or `Hold Shift`) while using other apps. | Shortcut does not fire; dictation cannot be triggered via keyboard. |
 | **Microphone** | Privacy & Security > Microphone | `AVCaptureDevice`, CoreAudio | Capturing audio for voice dictation. | Dictation cannot record; surfaces explicit error in the UI. |
-| **Automation (Apple Events)** | Privacy & Security > Automation | AppleScript, `NSAppleScript` | Scripting `System Events` to drive Hermes Desktop and terminal tabs. | Window activates to the front without sub-element targeting. |
 | **Power Management** | *No user prompt required* | IOKit (`IOPMAssertion`) | Preventing system idle sleep while coding agents are executing tasks. | System follows standard OS sleep timer. |
 
 ---
@@ -23,7 +22,6 @@ This document explains every permission Aegis requests, why it is needed, how it
 ### Accessibility (`AXIsProcessTrusted`)
 - **Why It's Needed**:
   - **Voice Dictation**: Aegis does not merely simulate keystrokes. It captures the focused UI element (`kAXFocusedUIElementAttribute`), checks its role (`AXTextField`, `AXTextArea`, `AXComboBox`), enables Chromium accessibility if needed (`AXManualAccessibility`), inspects the active caret position / selection range (`kAXSelectedTextRangeAttribute`), pastes once without moving focus or the caret, and restores the original clipboard only after bounded readback confirms insertion.
-  - **Hermes Desktop Tab Jump**: To switch directly to the tab matching your agent task, Aegis traverses the Hermes window hierarchy using Accessibility actions (`AXPress`, `AXRaise`).
 - **Safety Safeguards**:
   - Dictation is strictly blocked in secure password fields (`kAXSecureTextFieldSubrole`).
   - If the focused app or field changes while speaking, Aegis copies the transcript to the clipboard. Caret movements within the same field use the live selection.
@@ -43,11 +41,6 @@ This document explains every permission Aegis requests, why it is needed, how it
   - The microphone is active **only** while recording is visibly engaged.
   - Audio files are stored temporarily and deleted immediately once transcription finishes.
   - Aegis does not retain or upload audio recordings to any third-party cloud.
-
-### Apple Events / Automation
-- **Why It's Needed**:
-  - Used by `TerminalJumper` to target specific tabs or panes in Apple Terminal, iTerm2, and Hermes Desktop.
-  - macOS displays an automation prompt the first time Aegis targets another application.
 
 ### IOKit Power Management
 - **Why It's Needed**:

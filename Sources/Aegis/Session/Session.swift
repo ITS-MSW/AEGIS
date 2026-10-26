@@ -60,67 +60,6 @@ struct SessionExecutionState: Equatable {
     }
 }
 
-enum PermissionAction: Hashable {
-    case deny
-    case allowOnce
-    case allowAll
-    case bypass
-}
-
-struct PendingPermission {
-    let toolName: String
-    let description: String?
-    let filePath: String?
-    let content: String?
-    let oldString: String?
-    let newString: String?
-    let respond: (PermissionAction) -> Void
-    /// Enqueue time. Used to surface oldest-first in the notch queue
-    /// (deterministic FIFO across sessions) — issue #6.
-    let requestedAt: Date
-
-    init(toolName: String, description: String?, filePath: String?, content: String?,
-         oldString: String?, newString: String?,
-         respond: @escaping (PermissionAction) -> Void,
-         requestedAt: Date = Date()) {
-        self.toolName = toolName
-        self.description = description
-        self.filePath = filePath
-        self.content = content
-        self.oldString = oldString
-        self.newString = newString
-        self.respond = respond
-        self.requestedAt = requestedAt
-    }
-}
-
-struct PendingQuestion {
-    let questions: [QuestionItem]
-    /// Respond with raw JSON data to write to the socket
-    let respond: (Data) -> Void
-    let requestedAt: Date
-
-    init(questions: [QuestionItem], respond: @escaping (Data) -> Void, requestedAt: Date = Date()) {
-        self.questions = questions
-        self.respond = respond
-        self.requestedAt = requestedAt
-    }
-}
-
-struct QuestionItem: Identifiable {
-    let id: String
-    let header: String?
-    let question: String
-    let options: [QuestionOption]
-    let multiSelect: Bool
-}
-
-struct QuestionOption: Identifiable {
-    let id: String
-    let label: String
-    let description: String?
-}
-
 struct Session: Identifiable {
     let id: String
     var cwd: String
@@ -128,20 +67,15 @@ struct Session: Identifiable {
     var status: SessionStatus
     var executionState = SessionExecutionState()
     var currentTool: String?
-    var pendingPermission: PendingPermission?
-    var pendingQuestion: PendingQuestion?
-    var terminalInfo: TerminalInfo?
     var firstPrompt: String?
     var lastUserMessage: String?
     var lastAssistantMessage: String?
     /// Ephemeral, public progress for the active turn. Never persisted.
     var activitySummary: String?
-    var terminalApp: String?
     var effortLevel: String?
     var lastToolDurationMs: Int?
     var sessionTitle: String?
-    /// Model the agent is currently using, captured from any hook with a
-    /// `model` field. Shortened by `shortModelName` for display.
+    /// Model metadata captured from provider events.
     var model: String?
     /// AI provider identifier.
     var source: String = "codex"
@@ -155,9 +89,6 @@ struct Session: Identifiable {
     /// Time of the most recent event from this session — used so the collapsed
     /// notch tracks the *currently active* session, not just whichever was opened first.
     var lastActivityAt: Date = .init()
-    /// When the session most recently entered an active state (thinking/toolUse).
-    /// Cleared when status returns to idle. Used to render the live "Xms" counter.
-    var activeStartedAt: Date?
     /// PID of the AI agent process. Used to detect when
     /// the agent has exited so we can clean up the session — agents don't
     /// always fire SessionEnd reliably (Codex doesn't, for example).
@@ -212,30 +143,6 @@ struct Session: Identifiable {
         return String(trimmed.prefix(max)) + "…"
     }
 
-    /// Short, display-ready model label.
-    var shortModelName: String? {
-        guard let raw = model, !raw.isEmpty else { return nil }
-        return raw.replacingOccurrences(of: "-", with: " ")
-    }
-
-    var durationText: String {
-        let elapsed = Date().timeIntervalSince(startedAt)
-        let minutes = Int(elapsed) / 60
-        if minutes >= 60 {
-            return "\(minutes / 60)h"
-        }
-        if minutes > 0 {
-            return "<\(minutes + 1)m"
-        }
-        return "<1m"
-    }
-
-    var detectedTerminalApp: String {
-        if let app = terminalApp { return app }
-        if terminalInfo == nil, source == "codex" { return "Open Codex" }
-        if terminalInfo == nil, source == "hermes" { return "Open Hermes" }
-        return TerminalJumper.appName(for: terminalInfo?.appBundleId)
-    }
 }
 
 enum SessionActivitySummary {
@@ -263,14 +170,4 @@ enum SessionActivitySummary {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return words.isEmpty ? "Using tool" : "Using \(words)"
     }
-}
-
-struct TerminalInfo {
-    var itermSessionId: String?
-    var termSessionId: String?
-    var tmuxPane: String?
-    var tty: String?
-    var appBundleId: String?
-    var kittyWindowId: String?
-    var weztermSocket: String?
 }

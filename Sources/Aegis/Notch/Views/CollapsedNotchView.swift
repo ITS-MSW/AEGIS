@@ -2,7 +2,6 @@ import SwiftUI
 
 struct CollapsedNotchView: View {
     @ObservedObject var sessionStore: SessionStore
-    @ObservedObject var rateLimitStore: RateLimitStore
     @Environment(\.notchTheme) private var theme
 
     var body: some View {
@@ -27,13 +26,15 @@ struct CollapsedNotchView: View {
         }
         .padding(.horizontal, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(sessionStore.activeSessions.count) active agents")
     }
 
     private var statusColor: Color {
         if sessionStore.activeSessions.isEmpty {
             return .gray
         }
-        if sessionStore.activeSessions.values.contains(where: { $0.pendingPermission != nil }) {
+        if sessionStore.activeSessions.values.contains(where: { $0.status == .waitingPermission }) {
             return .orange
         }
         if sessionStore.activeSessions.values.contains(where: { $0.status == .thinking }) {
@@ -42,24 +43,4 @@ struct CollapsedNotchView: View {
         return .green
     }
 
-    private var sessionIcon: String {
-        if sessionStore.activeSessions.values.contains(where: { $0.pendingPermission != nil }) {
-            return "hand.raised.fill"
-        }
-        if sessionStore.activeSessions.values.contains(where: { $0.status == .thinking }) {
-            return "brain"
-        }
-        return "terminal.fill"
-    }
-
-    private var statusText: String {
-        let count = sessionStore.activeSessions.count
-        if sessionStore.activeSessions.values.contains(where: { $0.pendingPermission != nil }) {
-            return "Approval needed"
-        }
-        if count == 1, let session = sessionStore.activeSessions.values.first {
-            return session.status.displayText
-        }
-        return "\(count) sessions"
-    }
 }

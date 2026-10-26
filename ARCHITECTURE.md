@@ -1,6 +1,6 @@
 # AEGIS Architecture & System Specification
 
-Aegis is a native macOS application for monitoring and interacting with AI coding agents (OpenAI Codex, Nous Hermes, OpenCode, and Google AntiGravity). It combines a borderless notch UI, a local Unix domain socket bridge, passive filesystem/database watchers, and audio synthesis.
+Aegis is a native macOS application for monitoring AI coding agents (OpenAI Codex, Nous Hermes, OpenCode, and Google AntiGravity). It combines a borderless notch UI, a local Unix domain socket bridge, passive filesystem/database watchers, and audio synthesis.
 
 ---
 
@@ -47,8 +47,8 @@ The system operates across two main boundaries:
 ### Socket Specification
 - **Path**: `/tmp/aegis.sock`
 - **Transport**: Unix Domain Stream Socket (`AF_UNIX`, `SOCK_STREAM`)
-- **Framing**: Newline-delimited JSON (`\n`)
-- **Directionality**: Bidirectional (events flow agent $\to$ app; decisions flow app $\to$ agent)
+- **Framing**: Four-byte big-endian length prefix followed by JSON (maximum 4 MB)
+- **Directionality**: One-way events from agent to app; the server closes each connection after reading the event
 
 ### Bridge Message Schema (`BridgeMessage`)
 ```json
@@ -66,13 +66,7 @@ The system operates across two main boundaries:
   "is_ephemeral": false,
   "effort_level": "medium",
   "model": "gpt-5",
-  "activity_summary": "Running command",
-  "terminal_info": {
-    "app_bundle_id": "com.github.wez.wezterm",
-    "term_session_id": "...",
-    "iterm_session_id": null,
-    "tmux_pane": "%1"
-  }
+  "activity_summary": "Running command"
 }
 ```
 
@@ -84,27 +78,19 @@ The system operates across two main boundaries:
 | `SessionStart` | New agent session initiated; allocates or resumes session entry. |
 | `SessionEnd` | Agent session officially terminated; triggers turn end and schedules removal. |
 | `UserPromptSubmit` | User submitted a prompt; moves status to `.thinking` and engages power assertion. |
-| `PreToolUse` | Agent is about to invoke a tool; moves status to `.toolUse` (or prompts approval in strict mode). |
+| `PreToolUse` | Agent is about to invoke a tool; moves status to `.toolUse`; native question tools instead mark the session waiting. |
 | `PostToolUse` | Tool execution finished; records elapsed duration and tool outcome. |
-| `PermissionRequest` | Agent requires explicit user consent; displays in-notch approval UI. |
-| `Stop` | LLM turn finished; moves status to `.idle` and presents markdown finish card. |
+| `PermissionRequest` | Native provider requests input; marks the session waiting without answering it. |
+| `Stop` | LLM turn finished; moves status to `.idle` and removes the session from the compact active count. |
 | `Notification` | Informational notification from agent. |
 | `SubagentStart` | Subagent spawned; increments active subagent execution count. |
 | `SubagentStop` | Subagent completed; decrements active subagent execution count. |
 | `PreCompact` | Context compaction initiated. |
 | `ActivityUpdate` | Progress/status text update during long-running tool execution. |
 
-### Strict Approval & Blocking Permission Handshake
-When an agent asks for permission (or under strict approval mode):
-1. `AegisBridge` sends `PermissionRequest` to `/tmp/aegis.sock`.
-2. The bridge process blocks on the socket connection waiting for a response line.
-3. Aegis displays the permission card in the notch.
-4. The user clicks **Deny**, **Allow Once**, **Allow All**, or **Bypass**.
-5. Aegis writes a `BridgeResponse` JSON payload back to the socket:
-   ```json
-   { "action": "allowOnce", "updatedPermissions": null }
-   ```
-6. `AegisBridge` parses the response and prints the provider's native approval payload to `stdout`, exiting with code 0 (or 1 for deny).
+### Native Permission and Question Handling
+
+The bridge sends observations and exits without reading replies or writing decisions to stdout. `SessionStore` uses waiting status to update the compact indicator and release keep-awake assertions. Native progress events resume execution tracking. There is no approval queue, answer storage, or automatic decision in Aegis.
 
 ---
 
@@ -114,25 +100,22 @@ Each AI provider uses distinct hook mechanisms that Aegis normalizes:
 
 ### 1. OpenAI Codex
 - **Integration**: Configured in `~/.codex/hooks.json` with `[features].hooks = true` in `~/.codex/config.toml`.
-- **Permissions**: Supports `deny`, `allowOnce`, `allowAll`, and `bypass`.
-- **Permission Persistence**: Codex requires prefix rules rather than runtime permission updates. Aegis appends `prefix_rule(...)` to `~/.codex/rules/aegis.rules`.
-- **Questions**: Mirrored from `request_user_input` tool events; answers are deferred to Codex.
+- **Permissions and questions**: Observed without answering. `request_user_input` pauses execution tracking until Codex reports progress. Existing provider approval rules are left untouched.
 
 ### 2. Nous Hermes
 - **Integration**: Hooks merged into `~/.hermes/config.yaml`.
 - **Sanitization**: Hermes CLI frequently outputs unescaped control characters (`\n`, `\t`) inside JSON strings; `AegisBridge` applies a byte-level sanitizer (`sanitizeControlChars`) before JSON parsing.
-- **Strict Mode**: Translates `pre_tool_call` into a blocking `PermissionRequest` if enabled in `~/.aegis/config.json`.
+- **Tool hooks**: Normalize lifecycle events without reading a strict-approval configuration or pausing for Aegis UI.
 - **Dictation**: Independent of Hermes. `DictationTranscriptionRunner` retains FluidAudio's Parakeet TDT v3 engine; `DictationCapsule` presents a nonactivating bottom panel. Output uses the live focused field or the clipboard, without restoring focus. Vocabulary and daily usage counts live in Aegis Application Support; audio is temporary.
 
 ### 3. OpenCode
 - **Integration**: Node.js plugin written to `~/.config/opencode/plugins/aegis.js` and registered in `opencode.json`.
-- **Communication**: Communicates with OpenCode's local REST/IPC API.
-- **Decisions**: Supports inline question answering and permissions (`deny`, `allowOnce`, `allowAll`).
+- **Communication**: Sends lifecycle and waiting-status observations through the bridge. It never calls OpenCode's approval or question-answer APIs.
 
 ### 4. Google AntiGravity (`agy`)
 - **Integration**: Hooks group written to `~/.gemini/config/hooks.json` when `~/.gemini/antigravity` is present.
 - **Enrichment**: AntiGravity emits compact hook payloads; `AegisBridge` reads `transcript.jsonl` from the active session directory to extract the latest user prompt, assistant response, and model.
-- **Strict Approval**: Translates pre-tool hooks to blocking permission prompts.
+- **Tool hooks**: Remain observations; native provider approval handling is unchanged.
 
 ---
 
@@ -184,20 +167,19 @@ Because AI agents can crash, be killed with `SIGKILL`, or exit without firing `S
 ### AppKit Notch Panel (`NotchPanel`)
 - **Subclass**: Custom `NSPanel` configured with:
   - `styleMask: [.borderless, .nonactivatingPanel]`
-  - `level = .statusBar + 1` (floats above menu bar and full-screen windows)
+  - `level = 27` (floats above menu bar and full-screen windows)
   - `isOpaque = false`, `backgroundColor = .clear`
   - `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]`
 - **View Hierarchy**:
   ```text
   NotchPanel (NSPanel)
     └── contentContainer (NSView - isolates constraint passes)
-          └── ClickThroughHostingView (NSHostingView)
+          └── NSHostingView
                 └── NotchContentView (SwiftUI)
-                      ├── NotchBackground (Shape & stroke border)
-                      ├── CollapsedNotchView / SessionListView
-                      ├── PermissionView / QuestionView
-                      └── FinishedView
+                      └── CollapsedNotchView (mascot, status, count)
   ```
+
+The panel ignores mouse events, cannot become key, and has only one size per display configuration. `NotchWindowController` updates its frame on display changes and shows it only while active sessions exist. There are no expansion states, timers, content measurements, or resize animations. Theme choices retain compact typography and the existing Codex mascot mask; previews use the compact layout.
 
 ### Screen Detector (`ScreenDetector`)
 - Uses `NSScreen.safeAreaInsets.top` to detect the presence and exact height of the physical MacBook notch.
@@ -206,31 +188,7 @@ Because AI agents can crash, be killed with `SIGKILL`, or exit without firing `S
 
 ---
 
-## 7. Terminal Jumper Engine
-
-When a session card or finish notification is clicked, `TerminalJumper` activates the originating window:
-
-```text
-Session.terminalInfo
-  ├── App Bundle ID
-  ├── Terminal / iTerm / Kitty / Ghostty / WezTerm IDs
-  ├── TMUX Pane ID
-  └── Working Directory (CWD)
-         │
-         ▼
-TerminalJumper Router
-  ├── Codex Desktop     ──▶ Open URL `codex://threads/<id>`
-  ├── Hermes Desktop    ──▶ AppleScript AXPress on session tab
-  ├── iTerm2            ──▶ AppleScript session select by ID
-  ├── Apple Terminal    ──▶ AppleScript tab select by CWD / TTY
-  ├── Ghostty / WezTerm ──▶ Frontmost activation + working dir match
-  ├── JetBrains IDEs    ──▶ Bundle ID activation + project directory
-  └── VS Code / Cursor  ──▶ Bundle ID activation + workspace match
-```
-
----
-
-## 8. Power Management Subsystem
+## 7. Power Management Subsystem
 
 To keep AI coding agents executing when the user steps away:
 - **Assertion**: Acquires IOKit power assertion `kIOPMAssertPreventUserIdleSystemSleep` with description `"Aegis agent execution"`.
@@ -245,7 +203,7 @@ To keep AI coding agents executing when the user steps away:
 
 ---
 
-## 9. Audio Synthesis & Sound Engine
+## 8. Audio Synthesis & Sound Engine
 
 - **Synthesis**: `SoundSynthesizer` generates pure audio mathematically using multi-partial sine wave oscillators, ADSR envelopes, and exponential decay curves.
 - **Lazy Engine Lifecycle**:
@@ -259,20 +217,7 @@ To keep AI coding agents executing when the user steps away:
 
 ---
 
-## 10. Rate Limiting & Runway Estimator
-
-- **Polling**: Polls `https://chatgpt.com/backend-api/wham/usage` every 60 seconds using the access token in `~/.codex/auth.json`.
-- **Classification**: Dynamically sorts returned quota windows by duration ($<2$ days = short 5h window, $\ge 2$ days = 7d weekly window).
-- **Runway Estimator (`QuotaRunwayEstimator`)**:
-  $$\text{Velocity} = \alpha \cdot \left(\frac{\Delta \text{Used}}{\Delta t}\right) + (1 - \alpha) \cdot \text{PreviousVelocity}$$
-  Projected consumption is compared against remaining quota:
-  - $\text{Ratio} \le 0.70 \implies \text{Comfortable (Green)}$
-  - $0.70 < \text{Ratio} \le 1.00 \implies \text{Watch (Orange)}$
-  - $\text{Ratio} > 1.00 \implies \text{Tight (Red)}$
-
----
-
-## 11. On-Disk State Layout
+## 9. On-Disk State Layout
 
 Aegis stores all operational state under `~/.aegis/`:
 
@@ -283,12 +228,9 @@ Aegis stores all operational state under `~/.aegis/`:
 │   ├── aegis-hermes-bridge
 │   ├── aegis-opencode-bridge
 │   └── aegis-antigravity-bridge
-├── cache/
-│   └── rl.json                  # Rate limit cache
 ├── run/
 │   └── aegis.pid                # Process lock PID file
 ├── sound-packs/                 # Custom user sound files
 │   └── *.wav / *.aiff / *.mp3
-├── config.json                  # Strict approval configuration
 └── debug.log                    # Diagnostic log stream
 ```

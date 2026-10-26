@@ -46,7 +46,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .transcription:
             return "Dictate into the focused text field with Shift."
         case .general:
-            return "Launch behavior, agent power, and notch expansion preferences."
+            return "Launch behavior, agent power, and status preferences."
         case .appearance:
             return "Choose the notch theme."
         case .integrations:
@@ -273,11 +273,6 @@ struct SettingsView: View {
 
     // MARK: - General
 
-    /// Two-way binding into the per-provider strict-approval map.
-    private func strictBinding(_ id: String) -> Binding<Bool> {
-        Binding(get: { settingsStore.isStrict(id) }, set: { settingsStore.setStrict(id, $0) })
-    }
-
     @ViewBuilder
     private var generalForm: some View {
         Section("System") {
@@ -287,26 +282,10 @@ struct SettingsView: View {
         }
 
         Section("Behavior") {
-            Toggle(isOn: $settingsStore.expandOnHover) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Expand on hover")
-                    Text("Instant on the built-in display; uses a short intent delay when multiple displays are connected. Turn off for click-only.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-            }
-            Toggle(isOn: $settingsStore.autoExpandOnPermission) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Auto-expand on permission request")
-                    Text("Pop the notch open whenever a session is waiting for your approval.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-            }
             Toggle(isOn: $settingsStore.showSubagents) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Show subagents")
-                    Text("Display child agent sessions as separate cards. Hidden subagents still appear when they need your input.")
+                    Text("Include child agents in the compact notch count. Waiting agents remain visible.")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
@@ -327,26 +306,6 @@ struct SettingsView: View {
             Text("Agent Power")
         } footer: {
             Text("Only system idle sleep is prevented; the display may still turn off. Battery use stops after two hours without agent progress, in Low Power Mode, or when macOS reports low battery.")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-
-        Section {
-            ForEach(SettingsStore.strictApprovalProviders, id: \.self) { id in
-                let provider = AIProvider.from(id)
-                Toggle(isOn: strictBinding(id)) {
-                    HStack(spacing: 8) {
-                        ProviderIcon(provider: provider, size: 15)
-                        Text(provider.displayName)
-                    }
-                }
-            }
-        } header: {
-            Text("Review every action")
-        } footer: {
-            Text("AntiGravity and Hermes expose blanket pre-tool hooks rather than selective permission prompts. Turn one on to pause every tool call for in-notch approval. Off by default; unanswered requests time out after about five minutes. Hermes also keeps its own prompt for dangerous commands.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.leading)
@@ -711,55 +670,29 @@ private struct IntegrationRow: View {
     }
 }
 
-/// A selectable theme swatch — renders a mini notch window using the theme's
-/// real chrome tokens so the picker doubles as a live preview.
+/// A selectable theme swatch — renders a compact notch using the theme's
+/// typography and mascot so the picker doubles as a live preview.
 private struct ThemePreviewCard: View {
     let theme: NotchTheme
     let title: String
     let selected: Bool
     let action: () -> Void
 
-    private var swatchBackground: Color {
-        switch theme.windowFill {
-        case .solid(let color):  return color
-        case .material:          return Color(red: 0.13, green: 0.13, blue: 0.16)
-        }
-    }
-
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack {
-                    swatchBackground
-                    // Themes with backdrop decoration preview it at reduced
-                    // scale, otherwise the picker can't show what sets them
-                    // apart. Static — the spin-in belongs to the real window.
-                    if case .web(let thread, let alpha) = theme.windowPattern {
-                        // 0.57 × width, the same ratio the real 600pt panel uses.
-                        WebOverlay(thread: thread, alpha: alpha, progress: 1, reach: 105)
-                    }
-                    if case .spider = theme.windowCreature {
-                        WebSlingerSpider(lens: .narrow, animate: false, unit: 0.85)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                            .padding(.trailing, 14)
-                    }
-                    // Mini session card built from the theme's own tokens.
+                    NotchShape(cornerRadius: 14).fill(.black)
                     HStack(spacing: 6) {
-                        Circle()
-                            .fill(Color.cyan)
-                            .frame(width: 6, height: 6)
-                        Text("aegis")
-                            .font(theme.font(size: 9, weight: .semibold))
-                            .foregroundColor(theme.cardForeground.opacity(0.9))
-                            .lineLimit(1)
+                        SessionMascot(status: .thinking, size: 16, animated: false, provider: .codex)
                         Spacer(minLength: 0)
+                        Circle().fill(.cyan).frame(width: 6, height: 6)
+                        Text("1")
+                            .font(theme.font(size: 10, weight: .medium))
+                            .foregroundColor(.white.opacity(0.8))
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 7)
-                    .notchCard(theme, tint: theme.cardHueActive ?? .cyan, active: true)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 13)
+                    .padding(.horizontal, 14)
+                    .environment(\.notchTheme, theme)
                 }
                 .frame(height: 66)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))

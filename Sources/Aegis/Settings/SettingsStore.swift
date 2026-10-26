@@ -47,12 +47,6 @@ final class SettingsStore: ObservableObject {
     @Published var soundProfile: SoundProfile {
         didSet { UserDefaults.standard.set(soundProfile.rawValue, forKey: "soundProfile") }
     }
-    @Published var autoExpandOnPermission: Bool {
-        didSet { UserDefaults.standard.set(autoExpandOnPermission, forKey: "autoExpandOnPermission") }
-    }
-    @Published var expandOnHover: Bool {
-        didSet { UserDefaults.standard.set(expandOnHover, forKey: "expandOnHover") }
-    }
     @Published var showSubagents: Bool {
         didSet { UserDefaults.standard.set(showSubagents, forKey: "showSubagents") }
     }
@@ -77,7 +71,7 @@ final class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(hasSeenThemeOnboarding, forKey: "hasSeenThemeOnboarding") }
     }
 
-    /// Selected visual theme for the notch windows. Persisted by raw value.
+    /// Selected typography and mascot styling for the compact notch. Persisted by raw value.
     @Published var notchThemeID: NotchThemeID {
         didSet { UserDefaults.standard.set(notchThemeID.rawValue, forKey: "notchThemeID") }
     }
@@ -87,18 +81,6 @@ final class SettingsStore: ObservableObject {
     /// onboarding instead and have this stamped to the current version.
     @Published var lastWhatsNewVersion: String {
         didSet { UserDefaults.standard.set(lastWhatsNewVersion, forKey: "lastWhatsNewVersion") }
-    }
-
-    /// Providers whose hooks are blanket "before every tool" gates (no native
-    /// selective permission event). Strict-approval mode turns those into
-    /// blocking in-notch approve/deny prompts — opt-in, per provider.
-    static let strictApprovalProviders = ["antigravity", "hermes"]
-
-    /// Per-provider "review every action" flags (default off). Persisted to
-    /// UserDefaults AND mirrored to ~/.aegis/config.json so the bridge
-    /// (a separate process) can decide whether to block a `before*` hook.
-    @Published var strictApproval: [String: Bool] {
-        didSet { persistStrictApproval() }
     }
 
     /// Per-event sound assignment: `SoundEvent.rawValue` → "default" | "off" |
@@ -183,8 +165,6 @@ final class SettingsStore: ObservableObject {
             "soundEnabled": true,
             "soundVolume": Float(0.7),
             "soundProfile": SoundProfile.quietGlass.rawValue,
-            "autoExpandOnPermission": true,
-            "expandOnHover": true,
             "showSubagents": false,
             "keepAwakeMode": AgentKeepAwakeMode.off.rawValue,
             "launchAtLogin": false,
@@ -201,8 +181,6 @@ final class SettingsStore: ObservableObject {
         if storedSoundProfile == "yamete-kudasai" {
             defaults.set(SoundProfile.meme.rawValue, forKey: "soundProfile")
         }
-        self.autoExpandOnPermission = defaults.bool(forKey: "autoExpandOnPermission")
-        self.expandOnHover = defaults.bool(forKey: "expandOnHover")
         self.showSubagents = defaults.bool(forKey: "showSubagents")
         self.keepAwakeMode = AgentKeepAwakeMode(
             rawValue: defaults.string(forKey: "keepAwakeMode") ?? ""
@@ -238,16 +216,8 @@ final class SettingsStore: ObservableObject {
         self.hasSeenThemeOnboarding = defaults.bool(forKey: "hasSeenThemeOnboarding")
         self.lastWhatsNewVersion = defaults.string(forKey: "lastWhatsNewVersion") ?? ""
 
-        if let data = defaults.data(forKey: "strictApproval"),
-           let map = try? JSONDecoder().decode([String: Bool].self, from: data) {
-            self.strictApproval = map
-        } else {
-            self.strictApproval = [:]
-        }
         defaults.set(try? JSONEncoder().encode(soundAssignments), forKey: "soundAssignments")
         defaults.set(try? JSONEncoder().encode(soundEventVolumes), forKey: "soundEventVolumes")
-        // Mirror to the bridge config on launch so it reflects the saved state.
-        writeBridgeConfig()
         if launchAtLogin { updateLoginItem() }
     }
 
@@ -282,29 +252,6 @@ final class SettingsStore: ObservableObject {
         }
 
         defaults.set(true, forKey: migrationKey)
-    }
-
-    /// Convenience accessor/mutator for the per-provider toggle.
-    func isStrict(_ provider: String) -> Bool { strictApproval[provider] == true }
-    func setStrict(_ provider: String, _ on: Bool) { strictApproval[provider] = on }
-
-    private func persistStrictApproval() {
-        if let data = try? JSONEncoder().encode(strictApproval) {
-            UserDefaults.standard.set(data, forKey: "strictApproval")
-        }
-        writeBridgeConfig()
-    }
-
-    /// Writes ~/.aegis/config.json — the bridge reads this each run to
-    /// decide whether to block a provider's `before*` hook for approval.
-    private func writeBridgeConfig() {
-        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".aegis")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = dir.appendingPathComponent("config.json")
-        let payload: [String: Any] = ["strictApproval": strictApproval]
-        if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]) {
-            try? data.write(to: url, options: .atomic)
-        }
     }
 
     private func updateLoginItem() {

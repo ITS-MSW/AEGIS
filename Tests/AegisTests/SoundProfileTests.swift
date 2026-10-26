@@ -76,11 +76,7 @@ final class SoundProfileTests: XCTestCase {
             .statusChanged("session", .thinking),
             .toolStarted("session", "Bash"),
             .toolEnded("session", "Bash", .success),
-            .permissionRequested("session"),
-            .permissionResponded("session", true),
-            .permissionResponded("session", false),
-            .questionAsked("session"),
-            .pendingDismissedExternally("session"),
+            .statusChanged("session", .waitingPermission),
             .notification("session", "message"),
         ]
         for event in silentEvents {

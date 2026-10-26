@@ -60,8 +60,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>$VERSION</string>
     <key>LSUIElement</key>
     <true/>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>Aegis uses System Events to focus the exact Hermes session you select.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Aegis uses your microphone when you start dictation.</string>
     <key>CFBundlePackageType</key>

@@ -1,6 +1,6 @@
 # Aegis
 
-Aegis is a personal macOS notch app for monitoring AI coding agents. It receives agent hook events through a small bridge, shows live session state in a borderless notch panel, surfaces supported permission requests, and jumps back to the originating terminal or app.
+Aegis is a personal macOS notch app for monitoring AI coding agents. It receives agent hook events through a small bridge and shows aggregate agent status in a compact, passive notch panel.
 
 Codex Desktop and Hermes Desktop are monitored directly from their local session stores. Their desktop integrations do not require launching either provider from a terminal.
 
@@ -72,19 +72,15 @@ Codex Desktop ~/.codex/sessions/*.jsonl ─┐
 Hermes Desktop ~/.hermes/state.db ───────┴─> canonical events -> session store
 ```
 
-The bridge normalizes provider events into the app's canonical event set. The app preserves the existing session/process sweep, permission and question queue, terminal jumper, rate-limit polling, sound engine, theme tokens, and mascot rendering engine.
+The bridge normalizes provider events into the app's canonical event set. Session/process sweeping, desktop watchers, sound cues, agent keep-awake, and mascot rendering continue in the background.
 
-Desktop monitoring is read-only. Aegis shows prompts, working/tool state, and final responses, while permission decisions remain inside Codex Desktop or Hermes Desktop. CLI permission requests continue to use the bridge and can be answered from the notch.
-
-Session cards are clickable. Codex Desktop cards open the exact task through Codex's thread deep link. Hermes Desktop cards activate Hermes and select the matching session tab; macOS requests Accessibility access the first time this exact-tab feature is used. If that permission is not granted, the card still brings Hermes to the foreground.
+The notch stays compact: it shows the latest active provider mascot, status dot, and active-session count, and hides when no sessions are active. Mouse movement and clicks do not open it. Permissions and questions are answered in the originating provider; Aegis only observes waiting status and never returns decisions or changes approval rules. The menu bar retains sound, settings, hook installation, Welcome, What's New, and Quit actions.
 
 Runtime state is stored under `~/.aegis/`:
 
 ```text
 ~/.aegis/
 ├── bin/
-├── cache/rl.json
-├── config.json
 ├── debug.log
 ├── run/aegis.pid
 └── sound-packs/

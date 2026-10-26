@@ -41,7 +41,6 @@ enum CodexInstaller {
 
         let hooksOK = writeHooksJSON(in: dir)
         let tomlOK = enableHooksFeature(in: dir)
-        migrateLegacyRules(in: dir)
         installBridgeLauncher()
 
         print("[Aegis] Codex hooks installed at \(dir.path)")
@@ -61,7 +60,6 @@ enum CodexInstaller {
             "PreToolUse", "PostToolUse", "Stop",
             "SubagentStart", "SubagentStop", "PreCompact",
         ]
-        let permissionEvents = ["PermissionRequest"]
 
         let url = codexDir.appendingPathComponent("hooks.json")
 
@@ -90,9 +88,8 @@ enum CodexInstaller {
         // Codex caps SessionEnd hooks at three seconds; a larger timeout makes
         // the hook source invalid and prevents every lifecycle hook from loading.
         mergeAegisEntry(in: &hooks, event: "SessionEnd", command: bridgeCmd, timeout: 3)
-        for ev in permissionEvents {
-            mergeAegisEntry(in: &hooks, event: ev, command: bridgeCmd, timeout: 300)
-        }
+        // Observe native approval prompts without answering them or waiting for UI.
+        mergeAegisEntry(in: &hooks, event: "PermissionRequest", command: bridgeCmd, timeout: 5)
         root["hooks"] = hooks
 
         let newData: Data
@@ -281,23 +278,6 @@ enum CodexInstaller {
     }
 
     // MARK: - Bridge launcher
-
-    private static func migrateLegacyRules(in codexDir: URL) {
-        let rulesDir = codexDir.appendingPathComponent("rules", isDirectory: true)
-        let legacy = rulesDir.appendingPathComponent("caesuraisland.rules")
-        let current = rulesDir.appendingPathComponent("aegis.rules")
-        guard FileManager.default.fileExists(atPath: legacy.path),
-              let legacyText = try? String(contentsOf: legacy, encoding: .utf8) else { return }
-
-        let currentText = (try? String(contentsOf: current, encoding: .utf8)) ?? ""
-        let separator = currentText.isEmpty || currentText.hasSuffix("\n") ? "" : "\n"
-        do {
-            try (currentText + separator + legacyText).write(to: current, atomically: true, encoding: .utf8)
-            try FileManager.default.removeItem(at: legacy)
-        } catch {
-            Log.error("CodexInstaller: failed to migrate legacy approval rules: \(error)")
-        }
-    }
 
     private static func bridgeCommand() -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser

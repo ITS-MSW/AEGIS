@@ -1,11 +1,10 @@
 import Foundation
-import AppKit
 import AegisBridgeSupport
 
 // MARK: - Aegis Bridge
 // Reads hook JSON from a supported coding agent via stdin,
 // maps to Aegis format, sends to the app via Unix domain socket.
-// For PermissionRequest: waits for response and outputs to stdout.
+// Events are observations only; prompts and decisions stay with the provider.
 //
 // Usage: aegis-bridge [--source <id>]   (default --source codex)
 
@@ -94,9 +93,9 @@ let rawEvent = payload["hook_event_name"] as? String
 let eventNormalization: [String: [String: String]] = [
     // Hermes' turn cycle is driven by the
     // LLM-call events: pre_llm_call carries `user_message` (prompt → thinking),
-    // post_llm_call carries `assistant_response` (reply → finished, card STAYS).
-    // on_session_start just creates the card; on_session_end is ignored (the PID
-    // sweep handles real teardown — mapping it to SessionEnd deleted the card
+    // post_llm_call carries `assistant_response` (reply → idle).
+    // on_session_start registers the session; on_session_end is ignored (the PID
+    // sweep handles real teardown — mapping it to SessionEnd removed the session
     // every turn). subagent_stop tracks delegations.
     "hermes": [
         "on_session_start": "SessionStart", "on_session_end": "skip",
@@ -110,35 +109,13 @@ let eventNormalization: [String: [String: String]] = [
         "PreInvocation": "UserPromptSubmit", "PostInvocation": "skip",
     ],
 ]
-// Strict-approval gate for providers with blanket pre-tool hooks.
-let permissionGateEvents: [String: Set<String>] = [
-    "antigravity": ["PreToolUse"],
-    "hermes": ["pre_tool_call"],
-]
-func strictApprovalEnabled(_ source: String) -> Bool {
-    let url = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".aegis/config.json")
-    guard let data = try? Data(contentsOf: url),
-          let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let map = root["strictApproval"] as? [String: Any] else { return false }
-    return (map[source] as? Bool) == true
-}
-// Hermes' `clarify` rides on pre_tool_call but is a question, not a tool to
-// approve — never gate it (it goes through the question-mirror path instead).
-let isClarify = providerSource == "hermes" && (payload["tool_name"] as? String) == "clarify"
-let isStrictGate = (permissionGateEvents[providerSource]?.contains(rawEvent) ?? false)
-    && strictApprovalEnabled(providerSource)
-    && !isClarify
-
-let hookEvent = isStrictGate
-    ? "PermissionRequest"
-    : (eventNormalization[providerSource]?[rawEvent] ?? rawEvent)
+let hookEvent = eventNormalization[providerSource]?[rawEvent] ?? rawEvent
 // Events outside the canonical model are dropped silently.
 if hookEvent == "skip" { exit(0) }
 
 // Some CLIs use camelCase identifiers or omit one entirely. Fall
 // back to a STABLE per-process id — a random UUID would spawn a new session
-// card on every event.
+// entry on every event.
 let sessionId = (payload["session_id"] as? String)
     ?? (payload["sessionId"] as? String)
     ?? (payload["conversationId"] as? String)        // AntiGravity
@@ -159,29 +136,18 @@ let cwd = (payload["cwd"] as? String)
 let toolName = payload["tool_name"] as? String ?? payload["toolName"] as? String
     ?? (agToolCall?["name"] as? String)
 
-// Extract tool input as a string summary, plus separate content/path for Write/Edit
+// Extract tool input as a string summary for session tracking.
 var toolInputStr: String? = nil
-var toolContent: String? = nil
-var toolFilePath: String? = nil
-var toolOldString: String? = nil
-var toolNewString: String? = nil
-var normalizedToolInput = payload["tool_input"] as? [String: Any]
+let normalizedToolInput = payload["tool_input"] as? [String: Any]
 if let toolInput = normalizedToolInput {
     if let cmd = toolInput["command"] as? String {
         toolInputStr = cmd
     } else if let fp = toolInput["file_path"] as? String {
         toolInputStr = fp
-        toolFilePath = fp
     } else if let url = toolInput["url"] as? String {
         toolInputStr = url
-        toolFilePath = url
-        // For WebFetch: combine url and prompt
-        if let prompt = toolInput["prompt"] as? String {
-            toolContent = prompt
-        }
     } else if let pattern = toolInput["pattern"] as? String {
         toolInputStr = pattern
-        toolFilePath = pattern
     } else if let desc = toolInput["description"] as? String {
         toolInputStr = desc
     } else {
@@ -189,12 +155,6 @@ if let toolInput = normalizedToolInput {
             toolInputStr = String(data: data, encoding: .utf8)
         }
     }
-    // Extract content/edits for Write/Edit tools (only if not already set by WebFetch)
-    if toolContent == nil {
-        toolContent = toolInput["content"] as? String
-    }
-    toolOldString = toolInput["old_string"] as? String
-    toolNewString = toolInput["new_string"] as? String
 } else if let toolInput = payload["tool_input"] as? String {
     toolInputStr = toolInput
 }
@@ -206,68 +166,6 @@ if toolInputStr == nil, let topCommand = payload["command"] as? String {
 if toolInputStr == nil, let cl = agArgs?["CommandLine"] as? String {
     toolInputStr = cl
 }
-// Hermes' `clarify` tool is its AskUserQuestion equivalent — tool_input is
-// {question, choices[]}. Reshape into the canonical {questions:[…]} so the
-// app's question mirror (the same path Codex's request_user_input uses) renders
-// it, with a jump-to-terminal to answer (the hook can't inject the choice).
-if providerSource == "hermes", toolName == "clarify",
-   let ti = payload["tool_input"] as? [String: Any],
-   let q = ti["question"] as? String {
-    let options: [[String: Any]] = ((ti["choices"] as? [String]) ?? []).map { ["label": $0] }
-    let canonical: [String: Any] = ["questions": [[
-        "question": q, "header": "Clarify", "options": options, "multiSelect": false,
-    ]]]
-    if let d = try? JSONSerialization.data(withJSONObject: canonical) {
-        toolInputStr = String(data: d, encoding: .utf8)
-    }
-}
-
-// Collect terminal env vars for jump support
-var envVars: [String: String] = [:]
-let processEnv = ProcessInfo.processInfo.environment
-
-// Pass through iTerm session ID only if we're actually in iTerm
-if processEnv["TERM_PROGRAM"] == "iTerm.app", let itermId = processEnv["ITERM_SESSION_ID"] {
-    envVars["ITERM_SESSION_ID"] = itermId
-}
-
-// Detect terminal app dynamically by walking up the process tree
-// to find the first GUI app (the terminal/IDE that spawned our shell)
-envVars["_TERM_BUNDLE_ID"] = findParentAppBundleId()
-
-/// Walk up the process tree to find the terminal/IDE app
-func findParentAppBundleId() -> String {
-    var pid = ProcessInfo.processInfo.processIdentifier
-
-    // Walk up ppid chain, max 20 hops
-    for _ in 0..<20 {
-        pid = getParentPid(pid)
-        if pid <= 1 { break }
-
-        // Check if this pid is a GUI app with a bundle ID
-        if let app = NSRunningApplication(processIdentifier: pid),
-           let bundleId = app.bundleIdentifier {
-            return bundleId
-        }
-    }
-
-    // Fallback: use __CFBundleIdentifier or TERM_PROGRAM
-    if let cf = processEnv["__CFBundleIdentifier"] { return cf }
-    return "com.apple.Terminal"
-}
-
-/// Get parent PID using sysctl
-func getParentPid(_ pid: pid_t) -> pid_t {
-    var info = kinfo_proc()
-    var size = MemoryLayout<kinfo_proc>.size
-    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
-    let result = sysctl(&mib, 4, &info, &size, nil, 0)
-    if result == 0 {
-        return info.kp_eproc.e_ppid
-    }
-    return 0
-}
-
 // Extract user and assistant messages. AntiGravity puts both only in its
 // transcript.jsonl.
 let agTranscriptPath = payload["transcriptPath"] as? String ?? payload["transcript_path"] as? String
@@ -345,17 +243,12 @@ if providerSource == "codex", payload["transcript_path"] is NSNull {
 if let parentSessionId { message["parent_session_id"] = parentSessionId }
 if let toolName { message["tool_name"] = toolName }
 if let toolInputStr { message["tool_input"] = toolInputStr }
-if let toolFilePath { message["tool_file_path"] = toolFilePath }
-if let toolContent { message["tool_content"] = toolContent }
-if let toolOldString { message["tool_old_string"] = toolOldString }
-if let toolNewString { message["tool_new_string"] = toolNewString }
 
 // Capture our parent PID. The bridge is launched directly by the AI agent
 // (the launcher script `exec`s into the bridge, so getppid() returns the
 // agent itself). The app uses this to detect when the agent has exited so
 // the session can be removed from the notch.
 message["agent_pid"] = Int(getppid())
-if !envVars.isEmpty { message["_env"] = envVars }
 if let userMessage { message["user_message"] = userMessage }
 if let assistantMessage { message["assistant_message"] = assistantMessage }
 if let sessionTitle = payload["session_title"] as? String, !sessionTitle.isEmpty {
@@ -449,79 +342,11 @@ func writeFramed(fd: Int32, payload: Data) -> Bool {
     }
 }
 
-func readExactly(fd: Int32, count: Int) -> Data? {
-    var buf = Data(count: count)
-    var got = 0
-    let ok = buf.withUnsafeMutableBytes { raw -> Bool in
-        guard let base = raw.baseAddress else { return false }
-        while got < count {
-            let n = read(fd, base.advanced(by: got), count - got)
-            if n > 0 { got += n }
-            else if n == 0 { return false }
-            else if errno == EINTR { continue }
-            else { return false }
-        }
-        return true
-    }
-    return ok ? buf : nil
-}
-
 // Send length-prefixed JSON
 guard writeFramed(fd: fd, payload: messageData) else {
     close(fd)
     exit(1)
 }
 
-// For permission requests, wait for framed response
-if hookEvent == "PermissionRequest" {
-    var timeout = timeval(tv_sec: 300, tv_usec: 0)
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-
-    guard let header = readExactly(fd: fd, count: 4) else {
-        close(fd); exit(1)
-    }
-    let len: UInt32 = header.withUnsafeBytes { raw in
-        let p = raw.bindMemory(to: UInt8.self)
-        return (UInt32(p[0]) << 24) | (UInt32(p[1]) << 16) | (UInt32(p[2]) << 8) | UInt32(p[3])
-    }
-    if len > 0, len <= 4 * 1024 * 1024, let body = readExactly(fd: fd, count: Int(len)) {
-        // For a strict-approval gate, the app replies in the canonical shape;
-        // translate it to the tool's native permission response before writing
-        // to stdout. Codex and OpenCode already speak this shape.
-        let out = isStrictGate ? translateStrictDecision(source: providerSource, appResponse: body) : body
-        FileHandle.standardOutput.write(out)
-        try? FileHandle.standardOutput.synchronize()
-    }
-}
-
 close(fd)
 exit(0)
-
-/// Maps the app's canonical decision to the gated tool's native response.
-/// Default to "allow" if anything is unparseable (matches each tool's fail-open
-/// behavior; better than silently denying the user's work).
-func translateStrictDecision(source: String, appResponse: Data) -> Data {
-    var behavior = "allow"
-    if let root = try? JSONSerialization.jsonObject(with: appResponse) as? [String: Any],
-       let hso = root["hookSpecificOutput"] as? [String: Any],
-       let decision = hso["decision"] as? [String: Any],
-       let b = decision["behavior"] as? String {
-        behavior = b   // "allow" | "deny" | "ask"
-    }
-    let deny = behavior == "deny"
-    let reason = "Denied in Aegis"
-    let json: String
-    switch source {
-    case "antigravity":
-        if deny { json = "{\"decision\":\"deny\",\"reason\":\"\(reason)\"}" }
-        else { json = "{\"decision\":\"allow\"}" }
-    case "hermes":
-        // Hermes pre_tool_call blocks on {"decision":"block"}; anything else
-        // (incl. an empty object) lets the tool proceed. No "ask" concept.
-        if deny { json = "{\"decision\":\"block\",\"reason\":\"\(reason)\"}" }
-        else { json = "{}" }
-    default:
-        return appResponse
-    }
-    return Data(json.utf8)
-}

@@ -8,10 +8,6 @@ enum SessionEvent {
     case statusChanged(String, SessionStatus)
     case toolStarted(String, String)
     case toolEnded(String, String, ToolOutcome?)
-    case permissionRequested(String)
-    case permissionResponded(String, Bool)
-    case questionAsked(String)
-    case pendingDismissedExternally(String)
     case notification(String, String)
 }
 
@@ -41,7 +37,6 @@ final class SessionStore: ObservableObject {
     private enum PostCommitEffect {
         case event(SessionEvent)
         case execution(SessionExecutionEvent)
-        case action(() -> Void)
         case scheduleRemoval(sessionId: String, delay: TimeInterval)
     }
 
@@ -188,7 +183,7 @@ final class SessionStore: ObservableObject {
         self.showsSubagents = showsSubagents
         guard !showsSubagents else { return }
         for sessionId in sessions.values.compactMap({ session in
-            session.parentSessionId != nil && session.pendingPermission == nil && session.pendingQuestion == nil
+            session.parentSessionId != nil && session.status != .waitingPermission
                 ? session.id
                 : nil
         }) {
@@ -199,8 +194,7 @@ final class SessionStore: ObservableObject {
     private func removeHiddenSubagentIfSettled(sessionId: String) {
         guard let session = sessions[sessionId],
               session.isEphemeral || (!showsSubagents && session.parentSessionId != nil),
-              session.pendingPermission == nil,
-              session.pendingQuestion == nil else { return }
+              session.status != .waitingPermission else { return }
         removeHiddenSubagent(sessionId: sessionId)
     }
 
@@ -252,15 +246,13 @@ final class SessionStore: ObservableObject {
 
     func handleMessage(
         _ message: BridgeMessage,
-        respond: ((BridgeResponse) -> Void)?,
-        respondRaw: ((Data) -> Void)? = nil,
         origin: SessionMessageOrigin = .providerHook
     ) {
         let sessionId = message.sessionId
         let parentSessionId = message.parentSessionId ?? sessions[sessionId]?.parentSessionId
         let isEphemeral = message.isEphemeral ?? sessions[sessionId]?.isEphemeral ?? false
         let hasPendingAttention = sessions[sessionId].map {
-            $0.pendingPermission != nil || $0.pendingQuestion != nil
+            $0.status == .waitingPermission
         } ?? false
         if (isEphemeral || (!showsSubagents && parentSessionId != nil)) && !hasPendingAttention && !Self.isAttentionRequest(message) {
             if sessions[sessionId] != nil {
@@ -302,7 +294,6 @@ final class SessionStore: ObservableObject {
                 cwd: message.cwd ?? "~",
                 startedAt: now,
                 status: .idle,
-                terminalInfo: message.terminalInfo,
                 source: message.source ?? "codex",
                 parentSessionId: message.parentSessionId
             )
@@ -311,9 +302,6 @@ final class SessionStore: ObservableObject {
             effects.append(.event(.sessionStarted(sessionId)))
         }
 
-        if let terminalInfo = message.terminalInfo {
-            session.terminalInfo = terminalInfo
-        }
         if let source = message.source {
             session.source = source
         }
@@ -337,7 +325,6 @@ final class SessionStore: ObservableObject {
         // Stamp activity time on every event so the collapsed notch tracks
         // whatever provider is most recently doing something.
         session.lastActivityAt = now
-        let statusBefore = session.status
         let wasExecuting = session.executionState.isConfirmedExecuting
         var recordedExecutionProgress = false
 
@@ -363,30 +350,6 @@ final class SessionStore: ObservableObject {
                     session.agentStartSec = Int(start.tv_sec)
                     session.agentStartUsec = Int(start.tv_usec)
                 }
-            }
-        }
-
-        // If a new event arrives while a permission/question is still pending,
-        // the user must have answered it via the terminal — dismiss the notch.
-        // Critical: capture the respond closures BEFORE clearing pending state
-        // and invoke them with safe defaults so the socket fd closes and the
-        // bridge unblocks. Dropping the closures without invoking them leaks
-        // the fd and leaves the bridge in read() for 300s (issue #2).
-        let isProgressEvent = ["PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"].contains(message.hookEvent)
-        if isProgressEvent {
-            let droppedPermission = session.pendingPermission
-            let droppedQuestion = session.pendingQuestion
-            if droppedPermission != nil || droppedQuestion != nil {
-                session.pendingPermission = nil
-                session.pendingQuestion = nil
-                effects.append(.action {
-                    droppedPermission?.respond(.allowOnce)
-                    if let droppedQuestion, let data = BridgeResponse.deferToTerminal() {
-                        droppedQuestion.respond(data)
-                    }
-                    Log.info("Pending resolved externally for session=\(sessionId.prefix(8)) (event=\(message.hookEvent))")
-                })
-                effects.append(.event(.pendingDismissedExternally(sessionId)))
             }
         }
 
@@ -435,30 +398,9 @@ final class SessionStore: ObservableObject {
             recordedExecutionProgress = true
             effects.append(.event(.toolStarted(sessionId, toolName)))
 
-            // Codex's `request_user_input` and Hermes' `clarify` are their
-            // AskUserQuestion equivalents — they fire through PreToolUse, not
-            // PermissionRequest, and the hook can't substitute an answer. So we
-            // mirror the question in the notch and route any click to the app/
-            // terminal where the user actually answers. (The Hermes bridge has
-            // already reshaped clarify's {question,choices} into the canonical
-            // questions JSON.) PostToolUse dismisses it once they've answered.
-            if Self.isMirroredQuestion(message),
-               let desc = message.toolInput,
-               let parsedQuestions = Self.parseQuestion(desc) {
+            if Self.isNativeQuestion(message) {
                 session.status = .waitingPermission
                 session.executionState.waitForUser()
-                session.pendingQuestion = PendingQuestion(
-                    questions: parsedQuestions,
-                    respond: { [weak self] _ in
-                        // Can't answer via hook — surface Codex.app so the
-                        // user finishes there. PostToolUse will dismiss the
-                        // notch's question view once they've answered.
-                        if let session = self?.sessions[sessionId] {
-                            TerminalJumper.jump(to: session)
-                        }
-                    }
-                )
-                effects.append(.event(.questionAsked(sessionId)))
             }
 
         case "PostToolUse":
@@ -477,85 +419,17 @@ final class SessionStore: ObservableObject {
             recordedExecutionProgress = true
 
         case "PermissionRequest":
-            let toolName = message.toolName ?? "unknown"
-            let description = message.toolInput
-
-            // OpenCode question events use the canonical AskUserQuestion name.
-            if toolName == "AskUserQuestion",
-               let desc = description,
-               let parsedQuestions = Self.parseQuestion(desc) {
-                session.status = .waitingPermission
-                session.executionState.waitForUser()
-                session.pendingQuestion = PendingQuestion(
-                    questions: parsedQuestions,
-                    respond: { rawData in
-                        Log.info("Question answered for session=\(sessionId.prefix(8))")
-                        // State is already cleared by respondToQuestion() synchronously
-                        respondRaw?(rawData)
-                    }
-                )
-                effects.append(.event(.questionAsked(sessionId)))
-            } else {
-                session.status = .waitingPermission
-                session.executionState.waitForUser()
-                session.pendingPermission = PendingPermission(
-                    toolName: toolName,
-                    description: description,
-                    filePath: message.toolFilePath,
-                    content: message.toolContent,
-                    oldString: message.toolOldString,
-                    newString: message.toolNewString,
-                    respond: { [weak self] action in
-                        Log.info("Permission responded: \(action) for session=\(sessionId.prefix(8)), respondRaw=\(respondRaw != nil)")
-                        // State is already cleared by respondToPermission() synchronously.
-                        // Codex rejects `updatedPermissions`, so we
-                        // persist allow-all / bypass via a TOML rules file instead
-                        // and return a plain `behavior: allow`.
-                        let isCodex = self?.sessions[sessionId]?.source == "codex"
-                        switch action {
-                        case .deny:
-                            respond?(BridgeResponse.deny())
-                        case .allowOnce:
-                            respond?(BridgeResponse.allow())
-                        case .allowAll:
-                            if isCodex {
-                                // For Codex, persist a prefix_rule for Bash only;
-                                // non-Bash tools can't be matched against
-                                // shell-command prefixes (issue #17). Either way,
-                                // ack the current call with a one-shot allow.
-                                let persisted = CodexPermissionRules.persistAlwaysAllow(toolName: toolName, toolInput: description)
-                                if !persisted {
-                                    Log.info("Codex Allow All not persisted for tool=\(toolName); allowing once")
-                                }
-                                respond?(BridgeResponse.allow())
-                            } else if let data = BridgeResponse.allowAllForTool(toolName), respondRaw != nil {
-                                Log.info("Sending allow-all response (\(data.count) bytes)")
-                                respondRaw?(data)
-                            } else {
-                                respond?(BridgeResponse.allow())
-                            }
-                        case .bypass:
-                            if isCodex {
-                                let persisted = CodexPermissionRules.persistAlwaysAllow(toolName: toolName, toolInput: description, broad: true)
-                                if !persisted {
-                                    Log.info("Codex Bypass not persisted for tool=\(toolName); allowing once")
-                                }
-                                respond?(BridgeResponse.allow())
-                            } else {
-                                respond?(BridgeResponse.allow())
-                            }
-                        }
-                    }
-                )
-                effects.append(.event(.permissionRequested(sessionId)))
-            }
+            // Observation only: the provider owns the prompt and its answer.
+            session.status = .waitingPermission
+            session.executionState.waitForUser()
+            effects.append(.event(.statusChanged(sessionId, .waitingPermission)))
 
         case "Stop":
             // Codex emits its follow-up suggestions as a SEPARATE Stop whose
             // assistant_message is a raw `{"suggestions":[…]}` object — never the
             // real reply. Don't render that JSON, and if the turn already
             // finished (the real reply's Stop already fired), drop it entirely so
-            // it doesn't pop a duplicate Finished card.
+            // it doesn't publish a duplicate completion.
             if let msg = message.assistantMessage, Self.isSuggestionsBlob(msg) {
                 // otherwise complete the turn but keep the prior reply (if any)
             } else if let msg = message.assistantMessage {
@@ -596,17 +470,6 @@ final class SessionStore: ObservableObject {
             break
         }
 
-        // Maintain the live "active timer" used by the session card. Starts when
-        // we first enter an active state from idle; carries through across
-        // thinking ↔ toolUse transitions; resets when we go back to idle.
-        let wasActive = statusBefore == .thinking || statusBefore == .toolUse
-        let isActive = session.status == .thinking || session.status == .toolUse
-        if isActive && !wasActive {
-            session.activeStartedAt = now
-        } else if !isActive {
-            session.activeStartedAt = nil
-        }
-
         let isExecuting = session.executionState.isConfirmedExecuting
         if !wasExecuting && isExecuting {
             effects.append(.execution(.began(sessionId)))
@@ -624,8 +487,6 @@ final class SessionStore: ObservableObject {
                 onEvent.send(event)
             case .execution(let event):
                 onExecutionEvent.send(event)
-            case .action(let action):
-                action()
             case .scheduleRemoval(let sessionId, let delay):
                 scheduleRemoval(sessionId: sessionId, after: delay)
             }
@@ -635,10 +496,10 @@ final class SessionStore: ObservableObject {
 
     private static func isAttentionRequest(_ message: BridgeMessage) -> Bool {
         if message.hookEvent == "PermissionRequest" { return true }
-        return message.hookEvent == "PreToolUse" && isMirroredQuestion(message)
+        return message.hookEvent == "PreToolUse" && isNativeQuestion(message)
     }
 
-    private static func isMirroredQuestion(_ message: BridgeMessage) -> Bool {
+    private static func isNativeQuestion(_ message: BridgeMessage) -> Bool {
         let source = message.source ?? "codex"
         return (source == "codex" && message.toolName == "request_user_input")
             || (source == "hermes" && message.toolName == "clarify")
@@ -654,41 +515,9 @@ final class SessionStore: ObservableObject {
         return String(flattened.prefix(600))
     }
 
-    // MARK: - Question Parsing
-
-    private static func parseQuestion(_ json: String) -> [QuestionItem]? {
-        guard let data = json.data(using: .utf8),
-              let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let questions = parsed["questions"] as? [[String: Any]],
-              !questions.isEmpty else {
-            return nil
-        }
-
-        return questions.enumerated().map { qIndex, q in
-            let questionText = q["question"] as? String ?? ""
-            let header = q["header"] as? String
-            // Accept both common multi-select field spellings.
-            let multiSelect = q["multiSelect"] as? Bool ?? q["multi"] as? Bool ?? false
-            let options = (q["options"] as? [[String: Any]] ?? []).enumerated().map { oIndex, opt in
-                QuestionOption(
-                    id: opt["label"] as? String ?? "q\(qIndex)_o\(oIndex)",
-                    label: opt["label"] as? String ?? "Option \(oIndex + 1)",
-                    description: opt["description"] as? String
-                )
-            }
-            return QuestionItem(
-                id: "q\(qIndex)",
-                header: header,
-                question: questionText,
-                options: options,
-                multiSelect: multiSelect
-            )
-        }
-    }
-
     /// Codex's "suggested follow-ups" arrive as an assistant_message that's a raw
     /// JSON object `{"suggestions":[{"title":…,"description":…}]}` — never a reply
-    /// to show. Detect it so we don't render the JSON or pop a Finished card.
+    /// to display. Ignore it once the turn has already finished.
     private static func isSuggestionsBlob(_ s: String) -> Bool {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         guard t.hasPrefix("{"), t.contains("\"suggestions\"") else { return false }
@@ -697,77 +526,4 @@ final class SessionStore: ObservableObject {
         return obj["suggestions"] != nil
     }
 
-    func respondToPermission(sessionId: String, action: PermissionAction) {
-        guard let pending = sessions[sessionId]?.pendingPermission else { return }
-        // Clear immediately so nextPendingPermission() won't find it again
-        sessions[sessionId]?.pendingPermission = nil
-        sessions[sessionId]?.status = .thinking
-        pending.respond(action)
-        onEvent.send(.permissionResponded(sessionId, action != .deny))
-        removeHiddenSubagentIfSettled(sessionId: sessionId)
-    }
-
-    /// Returns the session ID of the next session with a pending permission,
-    /// ordered by enqueue time (oldest first) for deterministic FIFO across
-    /// arbitrary dictionary iteration (issue #6).
-    func nextPendingPermission() -> String? {
-        sessions.values
-            .compactMap { s -> (id: String, at: Date)? in
-                guard let p = s.pendingPermission else { return nil }
-                return (s.id, p.requestedAt)
-            }
-            .min(by: { $0.at < $1.at })?.id
-    }
-
-    /// Returns the session ID of the next session with a pending question,
-    /// ordered by enqueue time (oldest first).
-    func nextPendingQuestion(excluding excludedSessionIDs: Set<String> = []) -> String? {
-        sessions.values
-            .compactMap { s -> (id: String, at: Date)? in
-                guard !excludedSessionIDs.contains(s.id) else { return nil }
-                guard let q = s.pendingQuestion else { return nil }
-                return (s.id, q.requestedAt)
-            }
-            .min(by: { $0.at < $1.at })?.id
-    }
-
-    /// Defer the pending question to the provider's terminal or app.
-    func deferQuestionToTerminal(sessionId: String) {
-        guard let q = sessions[sessionId]?.pendingQuestion else { return }
-        sessions[sessionId]?.pendingQuestion = nil
-        sessions[sessionId]?.status = .thinking
-        let data = BridgeResponse.deferToTerminal()
-        if let data { q.respond(data) }
-        if let session = sessions[sessionId] {
-            TerminalJumper.jump(to: session)
-        }
-        removeHiddenSubagentIfSettled(sessionId: sessionId)
-    }
-
-    /// Called from QuestionView with answers keyed by `QuestionItem.id`.
-    /// Multi-select answers come as comma-joined option labels — matches
-    /// the canonical provider question format.
-    func respondToQuestion(sessionId: String, answersByQuestionId: [String: String]) {
-        guard let q = sessions[sessionId]?.pendingQuestion else { return }
-
-        // BridgeResponse.allowWithAnswers expects answers keyed by the
-        // question text, so translate.
-        var answersByText: [String: String] = [:]
-        for question in q.questions {
-            if let v = answersByQuestionId[question.id] {
-                answersByText[question.question] = v
-            }
-        }
-
-        Log.info("Question answered for session=\(sessionId.prefix(8)), count=\(answersByText.count)")
-
-        // Clear immediately so nextPendingQuestion() won't find it again
-        sessions[sessionId]?.pendingQuestion = nil
-        sessions[sessionId]?.status = .thinking
-
-        if let data = BridgeResponse.allowWithAnswers(questions: q.questions, answers: answersByText) {
-            q.respond(data)
-        }
-        removeHiddenSubagentIfSettled(sessionId: sessionId)
-    }
 }
