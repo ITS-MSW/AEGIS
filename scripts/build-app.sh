@@ -39,6 +39,8 @@ if [ -d Resources/sounds ]; then
   cp -R Resources/sounds "$APP/Contents/Resources/sounds"
 fi
 
+cp -R Resources/ThirdPartyNotices "$APP/Contents/Resources/ThirdPartyNotices"
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

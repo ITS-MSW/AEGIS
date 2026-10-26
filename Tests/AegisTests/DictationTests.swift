@@ -93,6 +93,9 @@ final class DictationTests: XCTestCase {
         XCTAssertNil(tap(&state, key: 60, at: 2))
         XCTAssertEqual(tap(&state, key: 60, at: 2.2), .stop)
         XCTAssertFalse(state.recording)
+        var press = DictationShortcutState(mode: .press, key: .right)
+        XCTAssertEqual(tap(&press, key: 60, at: 1), .start)
+        XCTAssertEqual(tap(&press, key: 60, at: 2), .stop)
         XCTAssertNil(tap(&state, at: 3))
         XCTAssertNil(tap(&state, at: 4))
     }
@@ -126,6 +129,10 @@ final class DictationTests: XCTestCase {
         XCTAssertNil(state.shift(code: 56, down: false, at: 3.1))
         XCTAssertNil(tap(&state, at: 3.2))
         XCTAssertFalse(state.recording)
+        var press = DictationShortcutState(mode: .press, key: .right)
+        XCTAssertNil(press.shift(code: 60, down: true, at: 1))
+        XCTAssertNil(press.combination())
+        XCTAssertNil(press.shift(code: 60, down: false, at: 1.1))
     }
 
     func testHoldTypingCancelsAndResetDiscardsPendingTap() {
@@ -148,73 +155,40 @@ final class DictationTests: XCTestCase {
         let headphones = DictationMicrophone(id: "headset", deviceID: 1, name: "Headset", builtIn: false)
         let builtIn = DictationMicrophone(id: "mac", deviceID: 2, name: "MacBook Microphone", builtIn: true)
         let preference = "headset"
-        XCTAssertEqual(DictationMicrophone.resolve(preference: "", devices: [headphones, builtIn]), builtIn)
+        XCTAssertEqual(DictationMicrophone.resolve(preference: "", devices: [headphones, builtIn], defaultDevice: 2), builtIn)
         XCTAssertEqual(DictationMicrophone.resolve(preference: preference, devices: [builtIn]), builtIn)
         XCTAssertEqual(preference, "headset")
-        XCTAssertEqual(DictationMicrophone.resolve(preference: preference, devices: [headphones, builtIn]), headphones)
+        XCTAssertEqual(DictationMicrophone.resolve(preference: preference, devices: [headphones, builtIn], defaultDevice: 2), headphones)
         XCTAssertNil(DictationMicrophone.resolve(preference: preference, devices: []))
     }
 
     @MainActor
-    func testCapsuleUsesDictationCompletionAndFailureLabels() {
-        let model = DictationNotchModel()
-        XCTAssertEqual(model.title, "Ready")
-        model.phase = .inserting
-        XCTAssertEqual(model.title, "Inserting text…")
-        model.phase = .inserted
-        XCTAssertEqual(model.title, "Text inserted")
+    func testCapsuleUsesDictationCompletionAndFailureLabels() async throws {
+        _ = NSApplication.shared
+        let model = DictationCapsuleModel()
+        XCTAssertEqual(model.phase.title, "Ready")
+        model.phase = .transcribing
+        XCTAssertEqual(model.phase.title, "Transcribing…")
+        model.phase = .copied
+        XCTAssertEqual(model.phase.title, "Copied to clipboard")
         model.phase = .failed("Microphone disconnected")
-        XCTAssertEqual(model.title, "Dictation stopped")
-        XCTAssertEqual(model.phase.detail, "Microphone disconnected")
-    }
-    func testRunnerDrainsLargeOutputAndReturnsTranscript() async throws {
-        let directory = try makeTranscriber("print('x' * 100_000)\n    return {'success': True, 'transcript': 'Dictation test'}")
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let runner = DictationTranscriptionRunner()
-        let text = try await runner.transcribe(audioFile: directory.appendingPathComponent("test.wav"),
-            installation: HermesInstallation(rootDirectory: directory, pythonExecutable: URL(fileURLWithPath: "/usr/bin/python3")))
-        XCTAssertEqual(text, "Dictation test")
-    }
+        XCTAssertEqual(model.phase.title, "Microphone disconnected")
+        let capsule = DictationCapsuleWindowController(model: model)
+        XCTAssertFalse(capsule.window!.canBecomeKey)
+        XCTAssertFalse(capsule.window!.canBecomeMain)
+        model.recoveryText = "Recovered text"
+        capsule.present()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(capsule.window!.frame.height, 244, accuracy: 1)
+        capsule.dismiss()
 
-    func testRunnerCancellationStopsTranscription() async throws {
-        let directory = try makeTranscriber("import time\n    time.sleep(30)\n    return {'success': True, 'transcript': 'Must not insert'}")
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let runner = DictationTranscriptionRunner()
-        let operation = Task {
-            try await runner.transcribe(audioFile: directory.appendingPathComponent("test.wav"),
-                installation: HermesInstallation(rootDirectory: directory, pythonExecutable: URL(fileURLWithPath: "/usr/bin/python3")))
-        }
-        try await Task.sleep(for: .milliseconds(150))
-        let start = Date()
-        operation.cancel()
-        do {
-            _ = try await operation.value
-            XCTFail("Cancelled transcription returned a transcript")
-        } catch {
-            XCTAssertLessThan(Date().timeIntervalSince(start), 3)
-        }
-    }
-
-    private func makeTranscriber(_ body: String) throws -> URL {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("aegis-dictation-test-\(UUID())")
-        let tools = directory.appendingPathComponent("tools")
-        try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
-        try "".write(to: tools.appendingPathComponent("__init__.py"), atomically: true, encoding: .utf8)
-        try "def transcribe_recording(path):\n    \(body)\n".write(
-            to: tools.appendingPathComponent("voice_mode.py"), atomically: true, encoding: .utf8)
-        let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
-        let file = try AVAudioFile(forWriting: directory.appendingPathComponent("test.wav"), settings: format.settings)
-        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 480)!
-        buffer.frameLength = 480
-        for index in 0..<480 { buffer.floatChannelData![0][index] = 0.1 }
-        try file.write(from: buffer)
-        return directory
     }
 
     func testPermissionSetupAdvancesOnlyWhenAccessIsGranted() {
         var permissions = DictationPermissions(accessibility: false, keyboard: false, microphone: false)
         XCTAssertEqual(permissions.next, .accessibility)
         XCTAssertFalse(permissions.isReady)
+        XCTAssertFalse(permissions.canRecord)
         permissions.accessibility = true
         XCTAssertEqual(permissions.next, .keyboard)
         permissions.keyboard = true
@@ -225,6 +199,7 @@ final class DictationTests: XCTestCase {
         XCTAssertNil(permissions.next)
         permissions.accessibility = false
         XCTAssertFalse(permissions.isReady)
+        XCTAssertTrue(permissions.canRecord)
         XCTAssertEqual(permissions.next, .accessibility)
     }
 
@@ -252,7 +227,7 @@ final class DictationTests: XCTestCase {
             isRunning: true, originalFormat: format, currentFormat: changed))
     }
 
-    func testDictationKeepsItsOriginalSelectionAcrossApplicationChanges() throws {
+    func testShortcutSurvivesApplicationChangesAndRangesUseUTF16() throws {
         var shortcut = DictationShortcutState()
         XCTAssertNil(tap(&shortcut, at: 1))
         XCTAssertEqual(tap(&shortcut, at: 1.2), .start)
@@ -261,66 +236,38 @@ final class DictationTests: XCTestCase {
         XCTAssertNil(tap(&shortcut, at: 2))
         XCTAssertEqual(tap(&shortcut, at: 2.2), .stop)
 
-        let snapshot = DictationInsertionSnapshot(text: "Hello 🌍 world", selection: NSRange(location: 9, length: 5))
-        XCTAssertEqual(try snapshot.replacingSelection(with: "Aegis", currentText: "Hello 🌍 world"), "Hello 🌍 Aegis")
+        XCTAssertEqual(DictationInsertion.replacing(NSRange(location: 9, length: 5), in: "Hello 🌍 world", with: "Aegis"), "Hello 🌍 Aegis")
     }
 
     @MainActor
     func testUnavailableDestinationPreservesTextInsteadOfOverwritingEdits() throws {
-        let snapshot = DictationInsertionSnapshot(text: "Original", selection: NSRange(location: 8, length: 0))
-        XCTAssertThrowsError(try snapshot.replacingSelection(with: " words", currentText: "Edited"))
-        let invalid = DictationInsertionSnapshot(text: "Original", selection: NSRange(location: Int.max, length: 1))
-        XCTAssertThrowsError(try invalid.replacingSelection(with: " words", currentText: "Original"))
-        let transcripts = DictationTranscriptController()
+        XCTAssertNil(DictationInsertion.replacing(NSRange(location: Int.max, length: 1), in: "Original", with: "words"))
         let clipboard = NSPasteboard.withUniqueName()
         defer { clipboard.releaseGlobally() }
-        try transcripts.append("First transcript", clipboard: clipboard)
+        try DictationInsertion.copy("First transcript", to: clipboard)
         XCTAssertEqual(clipboard.string(forType: .string), "First transcript")
-        try transcripts.append("Second transcript", clipboard: clipboard)
+        try DictationInsertion.copy("Second transcript", to: clipboard)
         XCTAssertEqual(clipboard.string(forType: .string), "Second transcript")
-        XCTAssertEqual(transcripts.text, "First transcript\n\nSecond transcript")
     }
 
+    @MainActor
     func testEmptyRecordingFailsBeforeTranscription() async throws {
-        let directory = try makeTranscriber("raise RuntimeError('Empty audio must not reach transcription')")
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let audio = directory.appendingPathComponent("empty.wav")
+        let audio = FileManager.default.temporaryDirectory.appendingPathComponent("empty-\(UUID()).wav")
+        defer { try? FileManager.default.removeItem(at: audio) }
         let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
         do { _ = try AVAudioFile(forWriting: audio, settings: format.settings) }
         do {
-            _ = try await DictationTranscriptionRunner().transcribe(audioFile: audio,
-                installation: HermesInstallation(rootDirectory: directory, pythonExecutable: URL(fileURLWithPath: "/usr/bin/python3")))
+            _ = try await DictationTranscriptionRunner().transcribe(audioFile: audio, language: "auto")
             XCTFail("Empty audio was accepted")
-        } catch DictationTranscriptionError.recordingEmpty {
-            // The recorder failure is kept distinct from a valid recording containing no speech.
-        }
-    }
-
-    @MainActor
-    func testInsertionWaitsForFocusToSettleAfterSwitchingApps() async throws {
-        var checks = 0
-        try await DictationInsertion.waitForStableFocus {
-            checks += 1
-            if checks == 8 {
-                throw DictationFailure(message: "Desktop is still switching")
-            }
-        }
-        XCTAssertGreaterThanOrEqual(checks, 21)
-    }
-
-    @MainActor
-    func testInsertionStopsWhenOriginalFieldNeverRegainsFocus() async {
-        do {
-            try await DictationInsertion.waitForStableFocus {
-                throw DictationFailure(message: "Original field is unavailable")
-            }
-            XCTFail("Insertion must not proceed without stable focus")
-        } catch {
-            XCTAssertTrue(error.localizedDescription.contains("Could not settle focus"))
-        }
+        } catch DictationTranscriptionError.recordingEmpty {}
     }
 
     func testMeterThrottlingKeepsUpdatesBelowThirtyPerSecond() {
+        var gate = DictationSpeechGate()
+        gate.append(rms: 0.0001, frames: 48_000, sampleRate: 48_000)
+        XCTAssertFalse(gate.hasSpeech)
+        gate.append(rms: 0.02, frames: 6_000, sampleRate: 48_000)
+        XCTAssertTrue(gate.hasSpeech)
         var throttle = VoiceLevelThrottle()
         var updates = 0
         for _ in 0..<46 {
@@ -335,10 +282,10 @@ final class DictationTests: XCTestCase {
         var reads = 0
         let verified = try await DictationInsertion.verifyPaste(before: "Original", expected: "Original words") {
             reads += 1
-            return reads < 24 ? "Original" : "Original words"
+            return reads < 3 ? "Original" : "Original words"
         }
         XCTAssertTrue(verified)
-        XCTAssertEqual(reads, 24)
+        XCTAssertEqual(reads, 3)
     }
 
     @MainActor
@@ -353,79 +300,10 @@ final class DictationTests: XCTestCase {
     }
 
     @MainActor
-    func testSnapshotAllowsMissingReadbackAndPreservesKnownTextGuard() async throws {
+    func testMissingReadbackDoesNotClaimInsertion() async throws {
         let verified = try await DictationInsertion.verifyPaste(before: nil, expected: nil) { nil }
         XCTAssertFalse(verified)
-        let unreadable = DictationInsertionSnapshot(text: nil, selection: nil)
-        XCTAssertNil(try unreadable.replacingSelection(with: " words", currentText: nil))
-        let noCursor = DictationInsertionSnapshot(text: "Original", selection: nil)
-        XCTAssertNil(try noCursor.replacingSelection(with: " words", currentText: "Original"))
-        XCTAssertThrowsError(try noCursor.replacingSelection(with: " words", currentText: "Edited"))
-    }
-
-    func testEffectiveRangePrefersLiveCaretOverStaleSnapshot() {
-        // User kept typing position: caret at end when pasting starts.
-        XCTAssertEqual(
-            DictationInsertionSnapshot.effectiveInsertionRange(
-                snapshotSelection: NSRange(location: 8, length: 0),
-                snapshotText: "Original",
-                liveSelection: NSRange(location: 8, length: 0),
-                currentText: "Original"),
-            NSRange(location: 8, length: 0))
-        // User moved the caret mid-dictation: respect where they are now.
-        XCTAssertEqual(
-            DictationInsertionSnapshot.effectiveInsertionRange(
-                snapshotSelection: NSRange(location: 8, length: 0),
-                snapshotText: "Original",
-                liveSelection: NSRange(location: 3, length: 2),
-                currentText: "Original"),
-            NSRange(location: 3, length: 2))
-    }
-
-    func testEffectiveRangeRestoresSnapshotWhenRefocusCollapsesCaretToStart() {
-        // Programmatic refocus commonly resets the caret to 0; the snapshot (end
-        // of the user's lines) is the intended position, not the start.
-        let text = "Line one\nLine two\nLine three"
-        let end = (text as NSString).length
-        XCTAssertEqual(
-            DictationInsertionSnapshot.effectiveInsertionRange(
-                snapshotSelection: NSRange(location: end, length: 0),
-                snapshotText: text,
-                liveSelection: NSRange(location: 0, length: 0),
-                currentText: text),
-            NSRange(location: end, length: 0))
-        XCTAssertEqual(
-            DictationInsertionSnapshot.replacing(
-                NSRange(location: end, length: 0), in: text, with: " dictated"),
-            text + " dictated")
-    }
-
-    func testEffectiveRangeFallsBackToEndWhenNoCursorIsExposed() {
-        let text = "Line one\nLine two"
-        let end = (text as NSString).length
-        // Field exposes text but no cursor: append at the end, never at the start.
-        XCTAssertEqual(
-            DictationInsertionSnapshot.effectiveInsertionRange(
-                snapshotSelection: nil,
-                snapshotText: text,
-                liveSelection: nil,
-                currentText: text),
-            NSRange(location: end, length: 0))
-        // Live caret unreadable but the snapshot survived: keep it.
-        XCTAssertEqual(
-            DictationInsertionSnapshot.effectiveInsertionRange(
-                snapshotSelection: NSRange(location: 4, length: 0),
-                snapshotText: text,
-                liveSelection: nil,
-                currentText: text),
-            NSRange(location: 4, length: 0))
-        // Nothing readable anywhere: no forced position.
-        XCTAssertNil(
-            DictationInsertionSnapshot.effectiveInsertionRange(
-                snapshotSelection: nil,
-                snapshotText: nil,
-                liveSelection: nil,
-                currentText: nil))
+        XCTAssertNil(DictationInsertion.replacing(nil, in: "Original", with: "words"))
     }
 
     @MainActor
@@ -464,6 +342,59 @@ final class DictationTests: XCTestCase {
         failRestore = false
         XCTAssertTrue(unavailable.restore())
         XCTAssertEqual(muted[1], false)
+    }
+
+    @MainActor
+    func testDictationCommandsCorrectionsAndAggregatePersistence() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("dictation-data-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let data = DictationData(directory: directory)
+        let corrections = CorrectionLearner.corrections(from: "Open Agis now", to: "Open Aegis now")
+        XCTAssertEqual(corrections, [LearnedCorrection(heard: "Agis", corrected: "Aegis")])
+        data.learn(corrections)
+        XCTAssertEqual(DictationData.replace("Open Agis now", using: data.vocabulary), "Open Aegis now")
+        XCTAssertEqual(VoiceCommands.apply("Hello comma how are you question mark"), "Hello, how are you?")
+        XCTAssertEqual(VoiceCommands.apply("Save 20 percent today"), "Save 20% today")
+        XCTAssertEqual(VoiceCommands.apply("New paragraph."), "\n\n")
+        XCTAssertTrue(DictationController.usesEnglishCommands("Hello comma how are you", language: "auto"))
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        data.record(words: 10, seconds: 5, date: date)
+        data.record(words: 20, seconds: 10, date: date)
+        let restored = DictationData(directory: directory)
+        XCTAssertEqual(restored.vocabulary, data.vocabulary)
+        XCTAssertEqual(restored.days.count, 1)
+        XCTAssertEqual(restored.days[0].words, 30)
+        XCTAssertEqual(restored.days[0].sessions, 2)
+        let saved = try String(contentsOf: directory.appendingPathComponent("insights.json"))
+        XCTAssertFalse(saved.contains("Agis"))
+        XCTAssertFalse(saved.contains("transcript"))
+        restored.resetInsights()
+        XCTAssertTrue(restored.days.isEmpty)
+        XCTAssertEqual(restored.vocabulary.count, 1)
+    }
+
+    @MainActor
+    func testDictationRejectsUnsafeLearningAndPreservesUnreadableData() throws {
+        XCTAssertFalse(DictationController.usesEnglishCommands("Bonjour comma comment allez-vous", language: "fr"))
+        XCTAssertFalse(DictationController.usesEnglishCommands("Bonjour comma comment allez-vous", language: "auto"))
+        XCTAssertEqual(VoiceCommands.apply("the Oxford comma"), "the Oxford comma")
+        XCTAssertTrue(CorrectionLearner.corrections(from: "I like that", to: "I love that").isEmpty)
+        XCTAssertTrue(CorrectionLearner.corrections(from: String(repeating: "word ", count: 257), to: "changed").isEmpty)
+        let longWord = String(repeating: "a", count: 121)
+        XCTAssertTrue(CorrectionLearner.corrections(from: longWord, to: longWord + "b").isEmpty)
+        let entries = [DictationWord(heard: "café", replacement: "Aegis"), DictationWord(heard: "Aegis", replacement: "other")]
+        XCTAssertEqual(DictationData.replace("café cafés", using: entries), "Aegis cafés")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("dictation-corrupt-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("vocabulary.json")
+        try Data("unreadable".utf8).write(to: file)
+        let data = DictationData(directory: directory)
+        XCTAssertNotNil(data.error)
+        XCTAssertThrowsError(try data.saveWord(heard: "Agis", replacement: "Aegis"))
+        XCTAssertEqual(try String(contentsOf: file), "unreadable")
+        XCTAssertThrowsError(try DictationTranscriptionRunner.validateModel(at: directory))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("Encoder.mlmodelc").path))
     }
 
 }

@@ -6,7 +6,8 @@ struct DictationPermissions: Equatable {
     var accessibility: Bool
     var keyboard: Bool
     var microphone: Bool
-    var isReady: Bool { accessibility && keyboard && microphone }
+    var canRecord: Bool { keyboard && microphone }
+    var isReady: Bool { accessibility && canRecord }
     var next: DictationPermission? {
         if !accessibility { return .accessibility }
         if !keyboard { return .keyboard }

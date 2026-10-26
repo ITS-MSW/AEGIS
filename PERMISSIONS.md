@@ -10,8 +10,8 @@ This document explains every permission Aegis requests, why it is needed, how it
 
 | Permission Subsystem | System Setting | API / Framework | Core Aegis Capabilities | Fallback if Denied |
 | :--- | :--- | :--- | :--- | :--- |
-| **Accessibility** | Privacy & Security > Accessibility | `AXUIElement`, `AXIsProcessTrusted` | 1. Direct caret-position text insertion during voice dictation.<br>2. Selecting exact session tabs in Hermes Desktop. | Dictation text is copied to clipboard and saved in Settings; Hermes opens frontmost window without selecting the exact tab. |
-| **Input Monitoring** | Privacy & Security > Input Monitoring | `CGEventTap` (`cghidEventTap`) | Detecting global Shift key triggers (`Double-press Shift` or `Hold Shift`) while using other apps. | Shortcut does not fire; dictation cannot be triggered via keyboard. |
+| **Accessibility** | Privacy & Security > Accessibility | `AXUIElement`, `AXIsProcessTrusted` | 1. Pasting into the focused input during voice dictation.<br>2. Selecting exact session tabs in Hermes Desktop. | Dictation copies to the clipboard; Hermes opens frontmost window without selecting the exact tab. |
+| **Input Monitoring** | Privacy & Security > Input Monitoring | `CGEventTap` (`cghidEventTap`) | Detecting global Shift key triggers (`Press Shift`, `Double-press Shift` or `Hold Shift`) while using other apps. | Shortcut does not fire; dictation cannot be triggered via keyboard. |
 | **Microphone** | Privacy & Security > Microphone | `AVCaptureDevice`, CoreAudio | Capturing audio for voice dictation. | Dictation cannot record; surfaces explicit error in the UI. |
 | **Automation (Apple Events)** | Privacy & Security > Automation | AppleScript, `NSAppleScript` | Scripting `System Events` to drive Hermes Desktop and terminal tabs. | Window activates to the front without sub-element targeting. |
 | **Power Management** | *No user prompt required* | IOKit (`IOPMAssertion`) | Preventing system idle sleep while coding agents are executing tasks. | System follows standard OS sleep timer. |
@@ -22,15 +22,15 @@ This document explains every permission Aegis requests, why it is needed, how it
 
 ### Accessibility (`AXIsProcessTrusted`)
 - **Why It's Needed**:
-  - **Voice Dictation**: Aegis does not merely simulate keystrokes. It captures the focused UI element (`kAXFocusedUIElementAttribute`), checks its role (`AXTextField`, `AXTextArea`, `AXComboBox`), enables Chromium accessibility if needed (`AXManualAccessibility`), inspects the active caret position / selection range (`kAXSelectedTextRangeAttribute`), pastes the transcript, verifies insertion, and restores the original clipboard.
+  - **Voice Dictation**: Aegis does not merely simulate keystrokes. It captures the focused UI element (`kAXFocusedUIElementAttribute`), checks its role (`AXTextField`, `AXTextArea`, `AXComboBox`), enables Chromium accessibility if needed (`AXManualAccessibility`), inspects the active caret position / selection range (`kAXSelectedTextRangeAttribute`), pastes once without moving focus or the caret, and restores the original clipboard only after bounded readback confirms insertion.
   - **Hermes Desktop Tab Jump**: To switch directly to the tab matching your agent task, Aegis traverses the Hermes window hierarchy using Accessibility actions (`AXPress`, `AXRaise`).
 - **Safety Safeguards**:
   - Dictation is strictly blocked in secure password fields (`kAXSecureTextFieldSubrole`).
-  - If the target window or text content changes while speaking, Aegis will not overwrite your text; it copies the transcript to your clipboard instead.
+  - If the focused app or field changes while speaking, Aegis copies the transcript to the clipboard. Caret movements within the same field use the live selection.
 
 ### Input Monitoring (`CGEventTap`)
 - **Why It's Needed**:
-  - Aegis's dictation shortcut uses pure modifier taps: `Double-press Shift` or `Hold Shift`. Detecting modifier key presses while working in other applications requires a passive `CGEventTap` listening for `flagsChanged` events.
+  - Aegis's dictation shortcut uses pure modifier taps: `Press Shift`, `Double-press Shift` or `Hold Shift`. Detecting modifier key presses while working in other applications requires a passive `CGEventTap` listening for `flagsChanged` events.
 - **Safety Safeguards**:
   - The event tap is passive (`listenOnly`) and does not modify or intercept standard keystrokes.
   - Typing ordinary text (letters, numbers, symbols) while holding Shift does not trigger dictation; Aegis discards modified strokes to prevent false activations.
@@ -118,7 +118,7 @@ tccutil reset Microphone dev.aegis.app
 2. Select **Aegis** and click the minus (`-`) button to remove it completely.
 3. Do the same under **Input Monitoring**.
 4. Launch the newly built `build/Aegis.app`.
-5. Aegis will trigger fresh system prompts, or you can click **"Set up dictation access…"** in **Settings > Transcription**.
+5. Aegis will trigger fresh system prompts, or you can click **"Manage access…"** in **Settings > Transcription**.
 
 ---
 

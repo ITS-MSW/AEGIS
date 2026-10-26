@@ -11,10 +11,12 @@ Supported agents:
 - OpenCode
 - AntiGravity (`agy`)
 
+Dictation uses Parakeet TDT v3 through FluidAudio. Aegis imports the existing BetterWispr model when available, or you can choose its folder in Settings > Transcription. No model download is required. Recordings are temporary; Insights stores counts, not transcripts.
+
 ## Requirements
 
 - macOS 14 or later
-- Swift 5.9 or later
+- Swift 6.2 or later
 - At least one supported agent installed and configured
 
 ## Build

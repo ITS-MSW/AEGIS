@@ -122,7 +122,7 @@ Each AI provider uses distinct hook mechanisms that Aegis normalizes:
 - **Integration**: Hooks merged into `~/.hermes/config.yaml`.
 - **Sanitization**: Hermes CLI frequently outputs unescaped control characters (`\n`, `\t`) inside JSON strings; `AegisBridge` applies a byte-level sanitizer (`sanitizeControlChars`) before JSON parsing.
 - **Strict Mode**: Translates `pre_tool_call` into a blocking `PermissionRequest` if enabled in `~/.aegis/config.json`.
-- **Dictation Transcription**: Integrates directly with Hermes speech module (`tools.voice_mode.transcribe_recording`).
+- **Dictation**: Independent of Hermes. `DictationTranscriptionRunner` retains FluidAudio's Parakeet TDT v3 engine; `DictationCapsule` presents a nonactivating bottom panel. Output uses the live focused field or the clipboard, without restoring focus. Vocabulary and daily usage counts live in Aegis Application Support; audio is temporary.
 
 ### 3. OpenCode
 - **Integration**: Node.js plugin written to `~/.config/opencode/plugins/aegis.js` and registered in `opencode.json`.

@@ -9,6 +9,10 @@ final class DictationAudioRecorder {
     private var audioFile: AVAudioFile?
     private var outputURL: URL?
     private var configurationObserver: NSObjectProtocol?
+    private let speechLock = NSLock()
+    private var speech = DictationSpeechGate()
+
+    var hasSpeech: Bool { speechLock.withLock { speech.hasSpeech } }
 
     var isRecording: Bool { engine.isRunning }
 
@@ -48,6 +52,7 @@ final class DictationAudioRecorder {
         self.audioFile = file
         self.outputURL = url
 
+        speechLock.withLock { speech = DictationSpeechGate() }
         var levelThrottle = VoiceLevelThrottle()
         input.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
             do {
@@ -57,8 +62,10 @@ final class DictationAudioRecorder {
                 failureHandler?()
                 return
             }
+            let rms = Self.rms(from: buffer)
+            self.speechLock.withLock { self.speech.append(rms: Double(rms), frames: Int(buffer.frameLength), sampleRate: format.sampleRate) }
             if levelThrottle.shouldPublish(frames: Int(buffer.frameLength), sampleRate: format.sampleRate) {
-                levelHandler(Self.normalizedLevel(from: buffer))
+                levelHandler(Double(max(0, min(1, (20 * log10(max(rms, 0.000_001)) + 55) / 55))))
             }
         }
 
@@ -122,7 +129,7 @@ final class DictationAudioRecorder {
         !isRunning || !originalFormat.isEqual(currentFormat)
     }
 
-    private static func normalizedLevel(from buffer: AVAudioPCMBuffer) -> Double {
+    private static func rms(from buffer: AVAudioPCMBuffer) -> Float {
         guard let channel = buffer.floatChannelData?.pointee else { return 0 }
         let frameLength = Int(buffer.frameLength)
         guard frameLength > 0 else { return 0 }
@@ -132,9 +139,7 @@ final class DictationAudioRecorder {
             let sample = channel[index]
             sum += sample * sample
         }
-        let rms = sqrt(sum / Float(frameLength))
-        let decibels = 20 * log10(max(rms, 0.000_001))
-        return Double(max(0, min(1, (decibels + 55) / 55)))
+        return sqrt(sum / Float(frameLength))
     }
 }
 
@@ -146,5 +151,14 @@ struct VoiceLevelThrottle {
         guard Double(accumulatedFrames) >= sampleRate / 30 else { return false }
         accumulatedFrames = 0
         return true
+    }
+}
+
+struct DictationSpeechGate {
+    private var activeSeconds = 0.0
+    var hasSpeech: Bool { activeSeconds >= 0.12 }
+    mutating func append(rms: Double, frames: Int, sampleRate: Double) {
+        guard rms >= 0.003, frames > 0, sampleRate > 0 else { return }
+        activeSeconds += Double(frames) / sampleRate
     }
 }

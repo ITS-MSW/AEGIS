@@ -18,12 +18,22 @@ final class SettingsStore: ObservableObject {
     @Published var dictationMuteWhileRecording: Bool {
         didSet { UserDefaults.standard.set(dictationMuteWhileRecording, forKey: "dictationMuteWhileRecording") }
     }
+    @Published var dictationLanguage: String {
+        didSet { UserDefaults.standard.set(dictationLanguage, forKey: "dictationLanguage") }
+    }
+    @Published var dictationLearnCorrections: Bool {
+        didSet { UserDefaults.standard.set(dictationLearnCorrections, forKey: "dictationLearnCorrections") }
+    }
+    @Published var dictationVoiceCommands: Bool {
+        didSet { UserDefaults.standard.set(dictationVoiceCommands, forKey: "dictationVoiceCommands") }
+    }
     @Published var dictationAudioStatus = ""
     @Published var dictationStatus = ""
 
     static func registerDictationDefaults(_ defaults: UserDefaults) {
         defaults.register(defaults: ["dictationEnabled": false, "dictationMode": "toggle",
-                                     "dictationShiftKey": "either", "dictationMicrophoneID": "", "dictationMuteWhileRecording": false])
+                                     "dictationShiftKey": "either", "dictationMicrophoneID": "", "dictationMuteWhileRecording": false,
+                                     "dictationLanguage": "auto", "dictationLearnCorrections": true, "dictationVoiceCommands": true])
     }
 
     func resetDictationShortcut() { dictationShiftKey = .either }
@@ -160,6 +170,9 @@ final class SettingsStore: ObservableObject {
         Self.migrateLegacyInstallationIfNeeded()
         let defaults = UserDefaults.standard
         Self.registerDictationDefaults(defaults)
+        dictationLanguage = defaults.string(forKey: "dictationLanguage") ?? "auto"
+        dictationLearnCorrections = defaults.bool(forKey: "dictationLearnCorrections")
+        dictationVoiceCommands = defaults.bool(forKey: "dictationVoiceCommands")
         dictationEnabled = defaults.bool(forKey: "dictationEnabled")
         dictationMode = DictationMode(rawValue: defaults.string(forKey: "dictationMode") ?? "") ?? .toggle
         dictationShiftKey = DictationShiftKey(rawValue: defaults.string(forKey: "dictationShiftKey") ?? "") ?? .either

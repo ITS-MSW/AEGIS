@@ -1,10 +1,11 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
     name: "Aegis",
     platforms: [.macOS(.v14)],
     dependencies: [
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.5", traits: []),
         .package(url: "https://github.com/simibac/ConfettiSwiftUI.git", from: "1.0.0"),
     ],
     targets: [
@@ -12,6 +13,7 @@ let package = Package(
             name: "Aegis",
             dependencies: [
                 "AegisBridgeSupport",
+                .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "ConfettiSwiftUI", package: "ConfettiSwiftUI"),
             ],
             path: "Sources/Aegis",
@@ -40,5 +42,6 @@ let package = Package(
             dependencies: ["Aegis", "AegisBridgeSupport"],
             path: "Tests/AegisTests"
         ),
-    ]
+    ],
+    swiftLanguageModes: [.v5]
 )

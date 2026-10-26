@@ -67,8 +67,6 @@ struct SettingsView: View {
     var onPreviewFile: ((String) -> Void)? = nil
     @State private var soundLibraryVersion = 0   // bump to refresh library list
 
-    @ObservedObject private var dictationTranscripts = DictationTranscriptController.shared
-    @ObservedObject private var microphones = DictationMicrophoneMonitor.shared
     @State private var selection: SettingsSection = .general
     @State private var soundReloaded = false
 
@@ -229,31 +227,33 @@ struct SettingsView: View {
             // Hero card — Tahoe System Settings style. Big rounded-gradient
             // icon, large title, one-line description. Sits in its own
             // Section so the grouped form gives it the proper card chrome.
-            Section {
-                VStack(spacing: 14) {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(selection.accentColor.gradient)
-                        .frame(width: 64, height: 64)
-                        .overlay(
-                            Image(systemName: selection.systemImage)
-                                .font(.system(size: 30, weight: .semibold))
-                                .foregroundColor(.white)
-                        )
-                        .shadow(color: selection.accentColor.opacity(0.25), radius: 12, y: 6)
-                    VStack(spacing: 6) {
-                        Text(selection.title)
-                            .font(.system(size: 28, weight: .bold))
-                        Text(selection.hero)
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
+            if selection != .transcription {
+                Section {
+                    VStack(spacing: 14) {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(selection.accentColor.gradient)
+                            .frame(width: 64, height: 64)
+                            .overlay(
+                                Image(systemName: selection.systemImage)
+                                    .font(.system(size: 30, weight: .semibold))
+                                    .foregroundColor(.white)
+                            )
+                            .shadow(color: selection.accentColor.opacity(0.25), radius: 12, y: 6)
+                        VStack(spacing: 6) {
+                            Text(selection.title)
+                                .font(.system(size: 28, weight: .bold))
+                            Text(selection.hero)
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
-            }
 
+            }
             switch selection {
             case .transcription: transcriptionForm
             case .general:      generalForm
@@ -267,76 +267,8 @@ struct SettingsView: View {
         .scrollContentBackground(.hidden)
     }
 
-    @ViewBuilder
     private var transcriptionForm: some View {
-        Section {
-            Toggle("Enable dictation", isOn: Binding(
-                get: { settingsStore.dictationEnabled },
-                set: { enabled in
-                    settingsStore.dictationEnabled = enabled
-                    if enabled && !DictationPermissions.current().isReady { DictationPermissionSetup.shared.show() }
-                }
-            ))
-            Picker("Recording mode", selection: $settingsStore.dictationMode) {
-                ForEach(DictationMode.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-            Picker("Shortcut", selection: $settingsStore.dictationShiftKey) {
-                ForEach(DictationShiftKey.allCases, id: \.self) { key in
-                    Text(key == .either ? "Double-press Shift" : "Double-press \(key.title)").tag(key)
-                }
-            }
-            HStack {
-                Text(settingsStore.dictationMode == .hold
-                     ? "Hold \(settingsStore.dictationShiftKey.title) briefly to start. Release to stop."
-                     : "Press and release Shift twice to start or stop. Press Escape to cancel.")
-                    .font(.callout).foregroundStyle(.secondary)
-                Spacer()
-                Button("Reset shortcut") { settingsStore.resetDictationShortcut() }
-            }
-        }
-        Section("Microphone") {
-            Toggle("Mute while recording", isOn: $settingsStore.dictationMuteWhileRecording)
-            if !settingsStore.dictationAudioStatus.isEmpty {
-                Text(settingsStore.dictationAudioStatus).font(.callout).foregroundStyle(.red)
-            }
-            Text("Silence system audio during dictation and restore it when recording ends.")
-                .font(.callout).foregroundStyle(.secondary)
-            Picker("Input device", selection: $settingsStore.dictationMicrophoneID) {
-                Text("Automatic, prefer built-in microphone").tag("")
-                ForEach(microphones.devices) { Text($0.name).tag($0.id) }
-                if !settingsStore.dictationMicrophoneID.isEmpty &&
-                    !microphones.devices.contains(where: { $0.id == settingsStore.dictationMicrophoneID }) {
-                    Text("Selected microphone, disconnected").tag(settingsStore.dictationMicrophoneID)
-                }
-            }
-            Text(microphones.status(preference: settingsStore.dictationMicrophoneID))
-                .font(.callout).foregroundStyle(.secondary)
-        }
-        if !dictationTranscripts.text.isEmpty {
-            Section("Uninserted transcript") {
-                Text(dictationTranscripts.text).textSelection(.enabled)
-                Text("Your uninserted text is kept here until you clear it or quit Aegis.")
-                    .font(.callout).foregroundStyle(.secondary)
-                HStack {
-                    Button("Copy text") {
-                        do {
-                            try dictationTranscripts.copy()
-                            settingsStore.dictationStatus = "Copied to clipboard"
-                        } catch {
-                            settingsStore.dictationStatus = error.localizedDescription
-                        }
-                    }
-                    Button("Clear") { dictationTranscripts.clear() }
-                }
-            }
-        }
-        Section("Access") {
-            Button("Set up dictation access…") { DictationPermissionSetup.shared.show() }
-            if !settingsStore.dictationStatus.isEmpty {
-                Text(settingsStore.dictationStatus).font(.callout).foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-        }
+        DictationSettingsView(settings: settingsStore)
     }
 
     // MARK: - General

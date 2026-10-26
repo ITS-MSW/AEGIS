@@ -8,8 +8,17 @@ struct DictationMicrophone: Identifiable, Equatable {
     let name: String
     let builtIn: Bool
 
-    static func resolve(preference: String, devices: [Self]) -> Self? {
-        devices.first { $0.id == preference } ?? devices.first { $0.builtIn } ?? devices.first
+    static func resolve(preference: String, devices: [Self], defaultDevice: AudioDeviceID = defaultInput()) -> Self? {
+        devices.first { $0.id == preference } ?? devices.first { $0.deviceID == defaultDevice } ?? devices.first
+    }
+
+    static func defaultInput() -> AudioDeviceID {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var device = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        _ = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device)
+        return device
     }
 
     static func available() -> [Self] {
@@ -101,7 +110,11 @@ actor DictationAudio {
             throw CancellationError()
         }
     }
-    func stop() -> URL? { recorder.stop() }
+    func stop() throws -> URL? {
+        let file = recorder.stop()
+        guard recorder.hasSpeech else { throw DictationTranscriptionError.noSpeech }
+        return file
+    }
     func cancel() { recorder.cancel() }
     func removeRecording() { recorder.removeRecording() }
 }

@@ -102,29 +102,14 @@ Notes : Toggleable in Settings > General (`Show subagents`) to display all child
 
 ## Voice Dictation & Input Insertion
 
-What : [ Voice Dictation (Caret Insertion) ]
-How : Global speech dictation that records microphone input, transcribes it via the local Hermes speech engine, and inserts the transcription directly at the live caret position of the focused text field in any macOS application using macOS Accessibility (`AXUIElement`) and simulated Paste. Automatically restores clipboard contents after pasting.
-Notes : Requires macOS Accessibility and Microphone permissions. Includes verification of insertion and caret position.
-----
-What : [ Dictation Shortcut Modes & Custom Triggers ]
-How : Supports two distinct recording modes:
-  1. Toggle mode: Double-press Shift to start recording, double-press Shift to finish, Escape to cancel.
-  2. Hold mode (Push-to-Talk): Hold Shift to record, release to transcribe and insert.
-Allows selecting whether to trigger on Either Shift, Left Shift, or Right Shift.
-Notes : Configurable in Settings > Transcription. Uses low-level event taps (`CGEventTap`) for responsive detection without consuming regular typing keys.
-----
-What : [ Dictation System Audio Output Muting ]
-How : Optional toggle that mutes system audio output while dictation recording is active and automatically un-mutes / restores original audio levels when recording ends.
-Notes : Configurable in Settings > Transcription (`Mute while recording`). Prevents speaker output from contaminating microphone capture.
-----
-What : [ Dictation Microphone Selection & Monitoring ]
-How : Dynamically monitors connected audio input devices via CoreAudio. Users can select "Automatic, prefer built-in microphone" or lock dictation to a specific USB/Bluetooth microphone. Automatically detects disconnections and falls back safely.
-Notes : Configurable in Settings > Transcription. Shows live input device connection status.
-----
-What : [ Uninserted Transcript Buffer & Recovery ]
-How : If direct insertion fails (e.g. focused window closed, field inaccessible, or text modified during speech), the transcribed text is copied to the clipboard and retained in an "Uninserted transcript" section in Settings > Transcription, where it can be reviewed, copied, or cleared.
-Notes : Ensures spoken transcripts are never lost when third-party apps misbehave or lose focus.
-----
+- Parakeet TDT v3 through FluidAudio, loaded locally from an imported model. Auto or one of its 25 supported languages.
+- A compact bottom capsule shows microphone levels, cancellation, processing and clipboard feedback without taking focus.
+- Shift shortcuts support hold, single-press toggle and the existing double-press toggle, with left/right key selection and typing guards. Escape cancels.
+- Paste uses the live selection only while the same editable field remains focused. Otherwise text stays on the clipboard. A bounded readback restores the previous clipboard only after confirmed insertion, respecting newer clipboard changes.
+- The microphone picker follows the system default or a remembered device. Recording cancels if its device disappears or its format changes. Optional system-audio muting is restored on exit.
+- English voice commands support punctuation, paragraphs, symbols and removal of the last sentence in the current utterance. Ambiguous automatic-language input remains literal.
+- Optional correction learning observes only the just-inserted text for a bounded time. Vocabulary entries can be added, edited or deleted.
+- Insights stores daily word counts, dictation counts and speaking duration. There is no transcript history. Temporary recordings are removed after use; clipboard failures keep only the current result for recovery.
 
 ## Visual Themes & Customization
 
@@ -244,7 +229,7 @@ Notes : Rejects non-canonical events to prevent socket pollution or phantom sess
 ## Keyboard Shortcuts Summary
 
 What : [ Global Voice Dictation Shortcut ]
-How : Double-press `Shift` (or Left Shift / Right Shift) to start/stop dictation in Toggle mode, or hold `Shift` in Hold mode. Press `Escape` to cancel.
+How : Press or double-press `Shift` (or Left Shift / Right Shift), according to the selected toggle mode, or hold `Shift` in Hold mode. Press `Escape` to cancel.
 Notes : Configurable and resettable in Settings > Transcription.
 ----
 What : [ Settings Shortcut ]
