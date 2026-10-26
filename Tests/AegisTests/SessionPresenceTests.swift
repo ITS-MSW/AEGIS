@@ -14,8 +14,7 @@ final class SessionPresenceTests: XCTestCase {
                 cwd: "/tmp/project",
                 userMessage: "Do the work",
                 source: "codex"
-            ),
-            respond: nil
+            )
         )
         XCTAssertNotNil(store.activeSessions[sessionID])
 
@@ -26,8 +25,7 @@ final class SessionPresenceTests: XCTestCase {
                 cwd: "/tmp/project",
                 assistantMessage: "Done",
                 source: "codex"
-            ),
-            respond: nil
+            )
         )
 
         XCTAssertEqual(store.sessions[sessionID]?.status, .idle)
@@ -47,7 +45,6 @@ final class SessionPresenceTests: XCTestCase {
                 cwd: "/tmp/project",
                 startedAt: Date(),
                 status: status,
-                terminalInfo: nil,
                 source: "codex"
             )
         }
@@ -65,7 +62,6 @@ final class SessionPresenceTests: XCTestCase {
             cwd: "/tmp/project",
             startedAt: now.addingTimeInterval(-20 * 60),
             status: .thinking,
-            terminalInfo: nil,
             source: "hermes",
             lastActivityAt: now.addingTimeInterval(-16 * 60)
         )
@@ -86,7 +82,6 @@ final class SessionPresenceTests: XCTestCase {
             cwd: "/tmp/project",
             startedAt: now.addingTimeInterval(-45 * 60),
             status: .thinking,
-            terminalInfo: nil,
             source: "antigravity",
             lastActivityAt: now.addingTimeInterval(-16 * 60)
         )
@@ -107,7 +102,6 @@ final class SessionPresenceTests: XCTestCase {
             cwd: "/tmp/project",
             startedAt: now.addingTimeInterval(-10 * 60),
             status: .thinking,
-            terminalInfo: nil,
             source: "hermes",
             lastActivityAt: now.addingTimeInterval(-14 * 60)
         )
@@ -128,7 +122,6 @@ final class SessionPresenceTests: XCTestCase {
             cwd: "/tmp/project",
             startedAt: now.addingTimeInterval(-30 * 60),
             status: .toolUse,
-            terminalInfo: nil,
             source: "hermes",
             lastActivityAt: now.addingTimeInterval(-20 * 60)
         )
@@ -149,7 +142,6 @@ final class SessionPresenceTests: XCTestCase {
             cwd: "/tmp/project",
             startedAt: now.addingTimeInterval(-2 * 24 * 60 * 60),
             status: .toolUse,
-            terminalInfo: nil,
             source: "codex",
             lastActivityAt: now.addingTimeInterval(-2 * 24 * 60 * 60)
         )
@@ -173,7 +165,6 @@ final class SessionPresenceTests: XCTestCase {
                 userMessage: "Keep working",
                 source: "hermes"
             ),
-            respond: nil,
             origin: .durableProviderState
         )
         store.sessions[sessionID]?.lastActivityAt = now.addingTimeInterval(-20 * 60)
@@ -185,14 +176,10 @@ final class SessionPresenceTests: XCTestCase {
     }
 
     func testEmptyNotchPresencePolicy() {
-        XCTAssertFalse(NotchPresencePolicy.shouldShow(state: .collapsed, activeSessionCount: 0))
-        XCTAssertFalse(NotchPresencePolicy.shouldShow(state: .expanded, activeSessionCount: 0))
-        XCTAssertTrue(NotchPresencePolicy.shouldCollapse(state: .expanded, activeSessionCount: 0))
+        XCTAssertFalse(NotchPresencePolicy.shouldShow(activeSessionCount: 0))
     }
 
-    func testNotchShowsLiveWorkAndTransientResults() {
-        XCTAssertTrue(NotchPresencePolicy.shouldShow(state: .collapsed, activeSessionCount: 1))
-        XCTAssertTrue(NotchPresencePolicy.shouldShow(state: .finished(sessionId: "done"), activeSessionCount: 0))
-        XCTAssertTrue(NotchPresencePolicy.shouldShow(state: .permission(sessionId: "approval"), activeSessionCount: 0))
+    func testNotchShowsLiveWork() {
+        XCTAssertTrue(NotchPresencePolicy.shouldShow(activeSessionCount: 1))
     }
 }

@@ -6,10 +6,9 @@ extension Notification.Name {
 }
 
 @MainActor
-final class MenuBarManager: NSObject, NSMenuDelegate {
+final class MenuBarManager: NSObject {
     private var statusItem: NSStatusItem?
     private let settingsStore: SettingsStore
-    private let sessionStore: SessionStore
     private let onQuit: () -> Void
     private let onReloadSounds: () -> Void
     private let onPreviewEvent: (SoundEvent) -> Void
@@ -19,9 +18,8 @@ final class MenuBarManager: NSObject, NSMenuDelegate {
     private let onShowWhatsNew: () -> Void
     private var settingsWindow: NSWindow?
 
-    init(settingsStore: SettingsStore, sessionStore: SessionStore, onReloadSounds: @escaping () -> Void, onPreviewEvent: @escaping (SoundEvent) -> Void, onPreviewProfile: @escaping (SoundProfile) -> Void, onPreviewFile: @escaping (String) -> Void, onShowWelcome: @escaping () -> Void, onShowWhatsNew: @escaping () -> Void, onQuit: @escaping () -> Void) {
+    init(settingsStore: SettingsStore, onReloadSounds: @escaping () -> Void, onPreviewEvent: @escaping (SoundEvent) -> Void, onPreviewProfile: @escaping (SoundProfile) -> Void, onPreviewFile: @escaping (String) -> Void, onShowWelcome: @escaping () -> Void, onShowWhatsNew: @escaping () -> Void, onQuit: @escaping () -> Void) {
         self.settingsStore = settingsStore
-        self.sessionStore = sessionStore
         self.onReloadSounds = onReloadSounds
         self.onPreviewEvent = onPreviewEvent
         self.onPreviewProfile = onPreviewProfile
@@ -43,21 +41,12 @@ final class MenuBarManager: NSObject, NSMenuDelegate {
         }
 
         let menu = NSMenu()
-        menu.delegate = self
         menu.autoenablesItems = false
 
         let version = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"
         let titleItem = NSMenuItem(title: "Aegis v\(version)", action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
         menu.addItem(titleItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        // Sessions list — refreshed in menuWillOpen
-        let sessionsHeader = NSMenuItem(title: "No active sessions", action: nil, keyEquivalent: "")
-        sessionsHeader.isEnabled = false
-        sessionsHeader.tag = TagSessions
-        menu.addItem(sessionsHeader)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -93,63 +82,12 @@ final class MenuBarManager: NSObject, NSMenuDelegate {
         statusItem?.menu = menu
     }
 
-    // MARK: - NSMenuDelegate
-
-    /// Rebuild the sessions block right before the menu shows so the count
-    /// reflects current state — the initial menu is built once and would
-    /// otherwise stay frozen at "No active sessions".
-    func menuWillOpen(_ menu: NSMenu) {
-        refreshSessionsSection(menu: menu)
-    }
-
-    private func refreshSessionsSection(menu: NSMenu) {
-        // Find the existing header item (tag 100) and remove it + any inserted children up to the next separator.
-        guard let headerIdx = menu.items.firstIndex(where: { $0.tag == TagSessions }) else { return }
-        // Remove any session entries we inserted previously (they have TagSessionEntry).
-        let idx = headerIdx + 1
-        while idx < menu.items.count && menu.items[idx].tag == TagSessionEntry {
-            menu.removeItem(at: idx)
-        }
-
-        let active = Array(sessionStore.activeSessions.values).sorted(by: { $0.startedAt < $1.startedAt })
-        let header = menu.items[headerIdx]
-        if active.isEmpty {
-            header.title = "No active sessions"
-        } else {
-            header.title = active.count == 1 ? "1 active session" : "\(active.count) active sessions"
-            for (offset, session) in active.enumerated() {
-                let name = session.displayName.isEmpty ? session.projectName : session.displayName
-                let providerLabel = session.provider.displayName
-                let item = NSMenuItem(
-                    title: "  \(providerLabel) · \(name)",
-                    action: #selector(openSessionFromMenu(_:)),
-                    keyEquivalent: ""
-                )
-                item.target = self
-                item.representedObject = session.id
-                item.isEnabled = true
-                item.tag = TagSessionEntry
-                menu.insertItem(item, at: headerIdx + 1 + offset)
-            }
-        }
-    }
-
-    // Stable tags so we can find items when rebuilding sub-sections.
-    private let TagSessions = 100
-    private let TagSessionEntry = 101
-
     @objc private func toggleSound() {
         settingsStore.soundEnabled.toggle()
         if let menu = statusItem?.menu,
            let item = menu.items.first(where: { $0.action == #selector(toggleSound) }) {
             item.state = settingsStore.soundEnabled ? .on : .off
         }
-    }
-
-    @objc private func openSessionFromMenu(_ sender: NSMenuItem) {
-        guard let sessionId = sender.representedObject as? String,
-              let session = sessionStore.sessions[sessionId] else { return }
-        TerminalJumper.jump(to: session)
     }
 
     @objc private func openSettings() {

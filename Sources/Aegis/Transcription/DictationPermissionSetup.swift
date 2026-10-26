@@ -6,7 +6,8 @@ struct DictationPermissions: Equatable {
     var accessibility: Bool
     var keyboard: Bool
     var microphone: Bool
-    var isReady: Bool { accessibility && keyboard && microphone }
+    var canRecord: Bool { keyboard && microphone }
+    var isReady: Bool { accessibility && canRecord }
     var next: DictationPermission? {
         if !accessibility { return .accessibility }
         if !keyboard { return .keyboard }
@@ -117,7 +118,7 @@ final class DictationPermissionSetup: NSObject, ObservableObject, NSWindowDelega
         openingError = nil
         if permission == .microphone && AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
             Task {
-                _ = await HermesMicrophonePermission.request()
+                _ = await DictationMicrophonePermission.request()
                 refresh()
                 if !permissions.microphone { openSettings(permission) }
             }

@@ -18,42 +18,26 @@ final class SettingsStore: ObservableObject {
     @Published var dictationMuteWhileRecording: Bool {
         didSet { UserDefaults.standard.set(dictationMuteWhileRecording, forKey: "dictationMuteWhileRecording") }
     }
+    @Published var dictationLanguage: String {
+        didSet { UserDefaults.standard.set(dictationLanguage, forKey: "dictationLanguage") }
+    }
+    @Published var dictationLearnCorrections: Bool {
+        didSet { UserDefaults.standard.set(dictationLearnCorrections, forKey: "dictationLearnCorrections") }
+    }
+    @Published var dictationVoiceCommands: Bool {
+        didSet { UserDefaults.standard.set(dictationVoiceCommands, forKey: "dictationVoiceCommands") }
+    }
     @Published var dictationAudioStatus = ""
     @Published var dictationStatus = ""
 
     static func registerDictationDefaults(_ defaults: UserDefaults) {
         defaults.register(defaults: ["dictationEnabled": false, "dictationMode": "toggle",
-                                     "dictationShiftKey": "either", "dictationMicrophoneID": "", "dictationMuteWhileRecording": false])
+                                     "dictationShiftKey": "either", "dictationMicrophoneID": "", "dictationMuteWhileRecording": false,
+                                     "dictationLanguage": "auto", "dictationLearnCorrections": true, "dictationVoiceCommands": true])
     }
 
     func resetDictationShortcut() { dictationShiftKey = .either }
 
-    @Published var companionEnabled: Bool {
-        didSet { UserDefaults.standard.set(companionEnabled, forKey: "companionEnabled") }
-    }
-    @Published var companionScale: Double {
-        didSet {
-            let clamped = min(max(companionScale, 0.75), 1.50)
-            UserDefaults.standard.set(clamped, forKey: "companionScale")
-        }
-    }
-    @Published var companionFollowsActiveWorkspace: Bool {
-        didSet {
-            UserDefaults.standard.set(
-                companionFollowsActiveWorkspace,
-                forKey: "companionFollowsActiveWorkspace"
-            )
-        }
-    }
-    @Published var hermesVoiceHandoffEnabled: Bool {
-        didSet { UserDefaults.standard.set(hermesVoiceHandoffEnabled, forKey: "hermesVoiceHandoffEnabled") }
-    }
-    @Published var hermesVoiceWorkingDirectory: String {
-        didSet { UserDefaults.standard.set(hermesVoiceWorkingDirectory, forKey: "hermesVoiceWorkingDirectory") }
-    }
-    @Published var hermesVoiceTarget: HermesHandoffTarget {
-        didSet { UserDefaults.standard.set(hermesVoiceTarget.rawValue, forKey: "hermesVoiceTarget") }
-    }
     @Published var soundEnabled: Bool {
         didSet { UserDefaults.standard.set(soundEnabled, forKey: "soundEnabled") }
     }
@@ -62,12 +46,6 @@ final class SettingsStore: ObservableObject {
     }
     @Published var soundProfile: SoundProfile {
         didSet { UserDefaults.standard.set(soundProfile.rawValue, forKey: "soundProfile") }
-    }
-    @Published var autoExpandOnPermission: Bool {
-        didSet { UserDefaults.standard.set(autoExpandOnPermission, forKey: "autoExpandOnPermission") }
-    }
-    @Published var expandOnHover: Bool {
-        didSet { UserDefaults.standard.set(expandOnHover, forKey: "expandOnHover") }
     }
     @Published var showSubagents: Bool {
         didSet { UserDefaults.standard.set(showSubagents, forKey: "showSubagents") }
@@ -93,7 +71,7 @@ final class SettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(hasSeenThemeOnboarding, forKey: "hasSeenThemeOnboarding") }
     }
 
-    /// Selected visual theme for the notch windows. Persisted by raw value.
+    /// Selected typography and mascot styling for the compact notch. Persisted by raw value.
     @Published var notchThemeID: NotchThemeID {
         didSet { UserDefaults.standard.set(notchThemeID.rawValue, forKey: "notchThemeID") }
     }
@@ -103,18 +81,6 @@ final class SettingsStore: ObservableObject {
     /// onboarding instead and have this stamped to the current version.
     @Published var lastWhatsNewVersion: String {
         didSet { UserDefaults.standard.set(lastWhatsNewVersion, forKey: "lastWhatsNewVersion") }
-    }
-
-    /// Providers whose hooks are blanket "before every tool" gates (no native
-    /// selective permission event). Strict-approval mode turns those into
-    /// blocking in-notch approve/deny prompts — opt-in, per provider.
-    static let strictApprovalProviders = ["antigravity", "hermes"]
-
-    /// Per-provider "review every action" flags (default off). Persisted to
-    /// UserDefaults AND mirrored to ~/.aegis/config.json so the bridge
-    /// (a separate process) can decide whether to block a `before*` hook.
-    @Published var strictApproval: [String: Bool] {
-        didSet { persistStrictApproval() }
     }
 
     /// Per-event sound assignment: `SoundEvent.rawValue` → "default" | "off" |
@@ -186,51 +152,28 @@ final class SettingsStore: ObservableObject {
         Self.migrateLegacyInstallationIfNeeded()
         let defaults = UserDefaults.standard
         Self.registerDictationDefaults(defaults)
+        dictationLanguage = defaults.string(forKey: "dictationLanguage") ?? "auto"
+        dictationLearnCorrections = defaults.bool(forKey: "dictationLearnCorrections")
+        dictationVoiceCommands = defaults.bool(forKey: "dictationVoiceCommands")
         dictationEnabled = defaults.bool(forKey: "dictationEnabled")
         dictationMode = DictationMode(rawValue: defaults.string(forKey: "dictationMode") ?? "") ?? .toggle
         dictationShiftKey = DictationShiftKey(rawValue: defaults.string(forKey: "dictationShiftKey") ?? "") ?? .either
         dictationMuteWhileRecording = defaults.bool(forKey: "dictationMuteWhileRecording")
         dictationMicrophoneID = defaults.string(forKey: "dictationMicrophoneID") ?? ""
-        let preferredHermesDirectory = HermesHandoffConfiguration.preferredWorkingDirectory(
-            homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
-            fileExists: { FileManager.default.fileExists(atPath: $0.path) }
-        ).path
-
         // Register defaults
         defaults.register(defaults: [
-            "companionEnabled": false,
-            "companionScale": 1.0,
-            "companionFollowsActiveWorkspace": true,
-            "hermesVoiceHandoffEnabled": true,
-            "hermesVoiceWorkingDirectory": preferredHermesDirectory,
-            "hermesVoiceTarget": HermesHandoffTarget.newSession.rawValue,
             "soundEnabled": true,
             "soundVolume": Float(0.7),
             "soundProfile": SoundProfile.quietGlass.rawValue,
-            "autoExpandOnPermission": true,
-            "expandOnHover": true,
             "showSubagents": false,
             "keepAwakeMode": AgentKeepAwakeMode.off.rawValue,
             "launchAtLogin": false,
             "hasCompletedOnboarding": false,
-            "soundSessionStart": false,
-            "soundCompletion": true,
-            "soundToolUse": false,
             "soundError": true,
-            "soundPermission": true,
             "notchThemeID": NotchThemeID.aegis.rawValue,
             "hasSeenThemeOnboarding": false,
         ])
 
-        self.companionEnabled = defaults.bool(forKey: "companionEnabled")
-        self.companionScale = min(max(defaults.double(forKey: "companionScale"), 0.75), 1.50)
-        self.companionFollowsActiveWorkspace = defaults.bool(forKey: "companionFollowsActiveWorkspace")
-        self.hermesVoiceHandoffEnabled = defaults.bool(forKey: "hermesVoiceHandoffEnabled")
-        self.hermesVoiceWorkingDirectory = defaults.string(forKey: "hermesVoiceWorkingDirectory")
-            ?? preferredHermesDirectory
-        self.hermesVoiceTarget = HermesHandoffTarget(
-            rawValue: defaults.string(forKey: "hermesVoiceTarget") ?? ""
-        ) ?? .newSession
         self.soundEnabled = defaults.bool(forKey: "soundEnabled")
         self.soundVolume = defaults.float(forKey: "soundVolume")
         let storedSoundProfile = defaults.string(forKey: "soundProfile")
@@ -238,45 +181,28 @@ final class SettingsStore: ObservableObject {
         if storedSoundProfile == "yamete-kudasai" {
             defaults.set(SoundProfile.meme.rawValue, forKey: "soundProfile")
         }
-        self.autoExpandOnPermission = defaults.bool(forKey: "autoExpandOnPermission")
-        self.expandOnHover = defaults.bool(forKey: "expandOnHover")
         self.showSubagents = defaults.bool(forKey: "showSubagents")
         self.keepAwakeMode = AgentKeepAwakeMode(
             rawValue: defaults.string(forKey: "keepAwakeMode") ?? ""
         ) ?? .off
         self.launchAtLogin = defaults.bool(forKey: "launchAtLogin")
         self.hasCompletedOnboarding = defaults.bool(forKey: "hasCompletedOnboarding")
-        // Load per-event assignments, or migrate once from the old toggles
-        // (a `false` toggle → "off"). The old keys stay registered above so
-        // this read returns correct defaults for fresh installs too.
-        var assignments: [String: String]
+        // Keep only active events, preserving their custom sounds and Off choices.
         if let data = defaults.data(forKey: "soundAssignments"),
            let map = try? JSONDecoder().decode([String: String].self, from: data) {
-            assignments = map
+            self.soundAssignments = map.filter { SoundEvent(rawValue: $0.key) != nil }
         } else {
-            var m: [String: String] = [:]
-            if !defaults.bool(forKey: "soundSessionStart") { m["session-start"] = "off"; m["session-end"] = "off" }
-            if !defaults.bool(forKey: "soundCompletion") { m["completion"] = "off" }
-            if !defaults.bool(forKey: "soundToolUse") { m["tool-use"] = "off" }
-            if !defaults.bool(forKey: "soundError") { m["error"] = "off" }
-            if !defaults.bool(forKey: "soundPermission") {
-                m["approval-needed"] = "off"; m["approval-granted"] = "off"; m["approval-denied"] = "off"
+            var assignments: [String: String] = [:]
+            if let enabled = defaults.object(forKey: "soundSessionStart") as? Bool, !enabled {
+                assignments[SoundEvent.sessionEnd.rawValue] = "off"
             }
-            assignments = m
+            if !defaults.bool(forKey: "soundError") { assignments[SoundEvent.error.rawValue] = "off" }
+            self.soundAssignments = assignments
         }
-        // Calm palette defaults to meaningful notifications only. Preserve
-        // custom files and explicit Off choices while silencing legacy default
-        // start/end chatter once for existing installs.
-        if defaults.integer(forKey: "builtInSoundVersion") < 2 {
-            for key in ["session-start", "session-end"] where assignments[key] == nil || assignments[key] == "default" {
-                assignments[key] = "off"
-            }
-            defaults.set(2, forKey: "builtInSoundVersion")
-        }
-        self.soundAssignments = assignments
         if let data = defaults.data(forKey: "soundEventVolumes"),
            let map = try? JSONDecoder().decode([String: Float].self, from: data) {
-            self.soundEventVolumes = map.mapValues { max(0, min(1, $0)) }
+            self.soundEventVolumes = map.filter { SoundEvent(rawValue: $0.key) != nil }
+                .mapValues { max(0, min(1, $0)) }
         } else {
             self.soundEventVolumes = [:]
         }
@@ -290,14 +216,8 @@ final class SettingsStore: ObservableObject {
         self.hasSeenThemeOnboarding = defaults.bool(forKey: "hasSeenThemeOnboarding")
         self.lastWhatsNewVersion = defaults.string(forKey: "lastWhatsNewVersion") ?? ""
 
-        if let data = defaults.data(forKey: "strictApproval"),
-           let map = try? JSONDecoder().decode([String: Bool].self, from: data) {
-            self.strictApproval = map
-        } else {
-            self.strictApproval = [:]
-        }
-        // Mirror to the bridge config on launch so it reflects the saved state.
-        writeBridgeConfig()
+        defaults.set(try? JSONEncoder().encode(soundAssignments), forKey: "soundAssignments")
+        defaults.set(try? JSONEncoder().encode(soundEventVolumes), forKey: "soundEventVolumes")
         if launchAtLogin { updateLoginItem() }
     }
 
@@ -332,29 +252,6 @@ final class SettingsStore: ObservableObject {
         }
 
         defaults.set(true, forKey: migrationKey)
-    }
-
-    /// Convenience accessor/mutator for the per-provider toggle.
-    func isStrict(_ provider: String) -> Bool { strictApproval[provider] == true }
-    func setStrict(_ provider: String, _ on: Bool) { strictApproval[provider] = on }
-
-    private func persistStrictApproval() {
-        if let data = try? JSONEncoder().encode(strictApproval) {
-            UserDefaults.standard.set(data, forKey: "strictApproval")
-        }
-        writeBridgeConfig()
-    }
-
-    /// Writes ~/.aegis/config.json — the bridge reads this each run to
-    /// decide whether to block a provider's `before*` hook for approval.
-    private func writeBridgeConfig() {
-        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".aegis")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = dir.appendingPathComponent("config.json")
-        let payload: [String: Any] = ["strictApproval": strictApproval]
-        if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]) {
-            try? data.write(to: url, options: .atomic)
-        }
     }
 
     private func updateLoginItem() {

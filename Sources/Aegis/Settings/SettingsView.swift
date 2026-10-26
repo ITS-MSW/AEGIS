@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import AVFoundation
 
 // MARK: - Tabs
 
@@ -47,9 +46,9 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .transcription:
             return "Dictate into the focused text field with Shift."
         case .general:
-            return "Launch behavior, agent power, and notch expansion preferences."
+            return "Launch behavior, agent power, and status preferences."
         case .appearance:
-            return "Choose the notch theme and ambient companion."
+            return "Choose the notch theme."
         case .integrations:
             return "Manage hooks for the four supported agents."
         case .sound:
@@ -68,8 +67,6 @@ struct SettingsView: View {
     var onPreviewFile: ((String) -> Void)? = nil
     @State private var soundLibraryVersion = 0   // bump to refresh library list
 
-    @ObservedObject private var dictationTranscripts = DictationTranscriptController.shared
-    @ObservedObject private var microphones = DictationMicrophoneMonitor.shared
     @State private var selection: SettingsSection = .general
     @State private var soundReloaded = false
 
@@ -230,31 +227,33 @@ struct SettingsView: View {
             // Hero card — Tahoe System Settings style. Big rounded-gradient
             // icon, large title, one-line description. Sits in its own
             // Section so the grouped form gives it the proper card chrome.
-            Section {
-                VStack(spacing: 14) {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(selection.accentColor.gradient)
-                        .frame(width: 64, height: 64)
-                        .overlay(
-                            Image(systemName: selection.systemImage)
-                                .font(.system(size: 30, weight: .semibold))
-                                .foregroundColor(.white)
-                        )
-                        .shadow(color: selection.accentColor.opacity(0.25), radius: 12, y: 6)
-                    VStack(spacing: 6) {
-                        Text(selection.title)
-                            .font(.system(size: 28, weight: .bold))
-                        Text(selection.hero)
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
+            if selection != .transcription {
+                Section {
+                    VStack(spacing: 14) {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(selection.accentColor.gradient)
+                            .frame(width: 64, height: 64)
+                            .overlay(
+                                Image(systemName: selection.systemImage)
+                                    .font(.system(size: 30, weight: .semibold))
+                                    .foregroundColor(.white)
+                            )
+                            .shadow(color: selection.accentColor.opacity(0.25), radius: 12, y: 6)
+                        VStack(spacing: 6) {
+                            Text(selection.title)
+                                .font(.system(size: 28, weight: .bold))
+                            Text(selection.hero)
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
-            }
 
+            }
             switch selection {
             case .transcription: transcriptionForm
             case .general:      generalForm
@@ -268,84 +267,11 @@ struct SettingsView: View {
         .scrollContentBackground(.hidden)
     }
 
-    @ViewBuilder
     private var transcriptionForm: some View {
-        Section {
-            Toggle("Enable dictation", isOn: Binding(
-                get: { settingsStore.dictationEnabled },
-                set: { enabled in
-                    settingsStore.dictationEnabled = enabled
-                    if enabled && !DictationPermissions.current().isReady { DictationPermissionSetup.shared.show() }
-                }
-            ))
-            Picker("Recording mode", selection: $settingsStore.dictationMode) {
-                ForEach(DictationMode.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-            Picker("Shortcut", selection: $settingsStore.dictationShiftKey) {
-                ForEach(DictationShiftKey.allCases, id: \.self) { key in
-                    Text(key == .either ? "Double-press Shift" : "Double-press \(key.title)").tag(key)
-                }
-            }
-            HStack {
-                Text(settingsStore.dictationMode == .hold
-                     ? "Hold \(settingsStore.dictationShiftKey.title) briefly to start. Release to stop."
-                     : "Press and release Shift twice to start or stop. Press Escape to cancel.")
-                    .font(.callout).foregroundStyle(.secondary)
-                Spacer()
-                Button("Reset shortcut") { settingsStore.resetDictationShortcut() }
-            }
-        }
-        Section("Microphone") {
-            Toggle("Mute while recording", isOn: $settingsStore.dictationMuteWhileRecording)
-            if !settingsStore.dictationAudioStatus.isEmpty {
-                Text(settingsStore.dictationAudioStatus).font(.callout).foregroundStyle(.red)
-            }
-            Text("Silence system audio during dictation and restore it when recording ends.")
-                .font(.callout).foregroundStyle(.secondary)
-            Picker("Input device", selection: $settingsStore.dictationMicrophoneID) {
-                Text("Automatic, prefer built-in microphone").tag("")
-                ForEach(microphones.devices) { Text($0.name).tag($0.id) }
-                if !settingsStore.dictationMicrophoneID.isEmpty &&
-                    !microphones.devices.contains(where: { $0.id == settingsStore.dictationMicrophoneID }) {
-                    Text("Selected microphone, disconnected").tag(settingsStore.dictationMicrophoneID)
-                }
-            }
-            Text(microphones.status(preference: settingsStore.dictationMicrophoneID))
-                .font(.callout).foregroundStyle(.secondary)
-        }
-        if !dictationTranscripts.text.isEmpty {
-            Section("Uninserted transcript") {
-                Text(dictationTranscripts.text).textSelection(.enabled)
-                Text("Your uninserted text is kept here until you clear it or quit Aegis.")
-                    .font(.callout).foregroundStyle(.secondary)
-                HStack {
-                    Button("Copy text") {
-                        do {
-                            try dictationTranscripts.copy()
-                            settingsStore.dictationStatus = "Copied to clipboard"
-                        } catch {
-                            settingsStore.dictationStatus = error.localizedDescription
-                        }
-                    }
-                    Button("Clear") { dictationTranscripts.clear() }
-                }
-            }
-        }
-        Section("Access") {
-            Button("Set up dictation access…") { DictationPermissionSetup.shared.show() }
-            if !settingsStore.dictationStatus.isEmpty {
-                Text(settingsStore.dictationStatus).font(.callout).foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-        }
+        DictationSettingsView(settings: settingsStore)
     }
 
     // MARK: - General
-
-    /// Two-way binding into the per-provider strict-approval map.
-    private func strictBinding(_ id: String) -> Binding<Bool> {
-        Binding(get: { settingsStore.isStrict(id) }, set: { settingsStore.setStrict(id, $0) })
-    }
 
     @ViewBuilder
     private var generalForm: some View {
@@ -356,26 +282,10 @@ struct SettingsView: View {
         }
 
         Section("Behavior") {
-            Toggle(isOn: $settingsStore.expandOnHover) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Expand on hover")
-                    Text("Instant on the built-in display; uses a short intent delay when multiple displays are connected. Turn off for click-only.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-            }
-            Toggle(isOn: $settingsStore.autoExpandOnPermission) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Auto-expand on permission request")
-                    Text("Pop the notch open whenever a session is waiting for your approval.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-            }
             Toggle(isOn: $settingsStore.showSubagents) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Show subagents")
-                    Text("Display child agent sessions as separate cards. Hidden subagents still appear when they need your input.")
+                    Text("Include child agents in the compact notch count. Waiting agents remain visible.")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
@@ -396,26 +306,6 @@ struct SettingsView: View {
             Text("Agent Power")
         } footer: {
             Text("Only system idle sleep is prevented; the display may still turn off. Battery use stops after two hours without agent progress, in Low Power Mode, or when macOS reports low battery.")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-
-        Section {
-            ForEach(SettingsStore.strictApprovalProviders, id: \.self) { id in
-                let provider = AIProvider.from(id)
-                Toggle(isOn: strictBinding(id)) {
-                    HStack(spacing: 8) {
-                        ProviderIcon(provider: provider, size: 15)
-                        Text(provider.displayName)
-                    }
-                }
-            }
-        } header: {
-            Text("Review every action")
-        } footer: {
-            Text("AntiGravity and Hermes expose blanket pre-tool hooks rather than selective permission prompts. Turn one on to pause every tool call for in-notch approval. Off by default; unanswered requests time out after about five minutes. Hermes also keeps its own prompt for dangerous commands.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.leading)
@@ -454,55 +344,6 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
 
-        Section {
-            Toggle(isOn: $settingsStore.companionEnabled) {
-                HStack(spacing: 12) {
-                    MysaCompanionPreview()
-                        .frame(width: 44, height: 48)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Show Mysa")
-                        Text("A calm Aegis sentinel for agent state and attention.")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Scale")
-                    Text("Drag Mysa anywhere on your desktop.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                Slider(value: $settingsStore.companionScale, in: 0.75...1.50, step: 0.05)
-                    .frame(width: 170)
-                Text("\(Int((settingsStore.companionScale * 100).rounded()))%")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.secondary)
-                    .frame(width: 38, alignment: .trailing)
-            }
-            .disabled(!settingsStore.companionEnabled)
-
-            Toggle(isOn: $settingsStore.companionFollowsActiveWorkspace) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Follow active workspace")
-                    Text("Keep Mysa visible when you move between desktop spaces.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-            }
-            .disabled(!settingsStore.companionEnabled)
-        } header: {
-            Text("Ambient Companion")
-        } footer: {
-            Text("Mysa reflects idle, observing, working, attention, success, and failure. There are no levels, streaks, or reward loops.")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
     }
 
     // MARK: - Sound
@@ -614,15 +455,8 @@ struct SettingsView: View {
     }
 
     private static let soundEventRows: [(event: SoundEvent, title: String, subtitle: String)] = [
-        (.sessionStart,   "Session start",    "A new agent session begins"),
         (.sessionEnd,     "Session end",      "A session closes"),
-        (.completion,     "Task complete",    "The agent finished its turn"),
-        (.toolUse,        "Tool use",         "The agent runs a tool"),
         (.error,          "Error",            "Tool failure or error"),
-        (.approvalNeeded, "Approval needed",  "Permission or question pending"),
-        (.approvalGranted,"Approval granted", "You allowed an action"),
-        (.approvalDenied, "Approval denied",  "You denied an action"),
-        (.skillIssue,      "Skill issue",      "The same tool failed three times in 90 seconds"),
     ]
 
     @ViewBuilder
@@ -729,71 +563,6 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
 
-        Section {
-            Toggle(isOn: $settingsStore.hermesVoiceHandoffEnabled) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Push-to-Talk handoff")
-                    Text("Hold \(HermesHandoffConfiguration.defaultShortcutLabel), speak, then release to send.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-            }
-
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Destination")
-                    Text("Choose whether each utterance starts fresh or continues the latest session in this folder.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                Picker("", selection: $settingsStore.hermesVoiceTarget) {
-                    ForEach(HermesHandoffTarget.allCases) { target in
-                        Text(target.displayName).tag(target)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 150)
-            }
-            .disabled(!settingsStore.hermesVoiceHandoffEnabled)
-
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Working folder")
-                    Text(abbreviatedPath(settingsStore.hermesVoiceWorkingDirectory))
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(settingsStore.hermesVoiceWorkingDirectory)
-                }
-                Spacer()
-                Button("Choose…") {
-                    chooseHermesWorkingDirectory()
-                }
-            }
-            .disabled(!settingsStore.hermesVoiceHandoffEnabled)
-
-            if AVCaptureDevice.authorizationStatus(for: .audio) == .denied {
-                HStack {
-                    Label("Microphone access is off", systemImage: "mic.slash.fill")
-                        .foregroundColor(.orange)
-                    Spacer()
-                    Button("Open Privacy Settings…") {
-                        openMicrophonePrivacySettings()
-                    }
-                }
-            }
-        } header: {
-            Text("Hermes Voice")
-        } footer: {
-            Text("The microphone is active only while the shortcut is held. Audio is transcribed by your configured Hermes speech provider and removed immediately after the handoff.")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-
         Section("Bridge") {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -809,35 +578,6 @@ struct SettingsView: View {
                     .textSelection(.enabled)
             }
         }
-    }
-
-    private func abbreviatedPath(_ path: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        guard path == home || path.hasPrefix(home + "/") else { return path }
-        return "~" + path.dropFirst(home.count)
-    }
-
-    private func chooseHermesWorkingDirectory() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        panel.prompt = "Choose"
-        let current = NSString(string: settingsStore.hermesVoiceWorkingDirectory).expandingTildeInPath
-        if FileManager.default.fileExists(atPath: current) {
-            panel.directoryURL = URL(fileURLWithPath: current, isDirectory: true)
-        }
-        if panel.runModal() == .OK, let url = panel.url {
-            settingsStore.hermesVoiceWorkingDirectory = url.standardizedFileURL.path
-        }
-    }
-
-    private func openMicrophonePrivacySettings() {
-        guard let url = URL(
-            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
-        ) else { return }
-        NSWorkspace.shared.open(url)
     }
 
     // MARK: - About
@@ -930,55 +670,29 @@ private struct IntegrationRow: View {
     }
 }
 
-/// A selectable theme swatch — renders a mini notch window using the theme's
-/// real chrome tokens so the picker doubles as a live preview.
+/// A selectable theme swatch — renders a compact notch using the theme's
+/// typography and mascot so the picker doubles as a live preview.
 private struct ThemePreviewCard: View {
     let theme: NotchTheme
     let title: String
     let selected: Bool
     let action: () -> Void
 
-    private var swatchBackground: Color {
-        switch theme.windowFill {
-        case .solid(let color):  return color
-        case .material:          return Color(red: 0.13, green: 0.13, blue: 0.16)
-        }
-    }
-
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack {
-                    swatchBackground
-                    // Themes with backdrop decoration preview it at reduced
-                    // scale, otherwise the picker can't show what sets them
-                    // apart. Static — the spin-in belongs to the real window.
-                    if case .web(let thread, let alpha) = theme.windowPattern {
-                        // 0.57 × width, the same ratio the real 600pt panel uses.
-                        WebOverlay(thread: thread, alpha: alpha, progress: 1, reach: 105)
-                    }
-                    if case .spider = theme.windowCreature {
-                        WebSlingerSpider(lens: .narrow, animate: false, unit: 0.85)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                            .padding(.trailing, 14)
-                    }
-                    // Mini session card built from the theme's own tokens.
+                    NotchShape(cornerRadius: 14).fill(.black)
                     HStack(spacing: 6) {
-                        Circle()
-                            .fill(Color.cyan)
-                            .frame(width: 6, height: 6)
-                        Text("aegis")
-                            .font(theme.font(size: 9, weight: .semibold))
-                            .foregroundColor(theme.cardForeground.opacity(0.9))
-                            .lineLimit(1)
+                        SessionMascot(status: .thinking, size: 16, animated: false, provider: .codex)
                         Spacer(minLength: 0)
+                        Circle().fill(.cyan).frame(width: 6, height: 6)
+                        Text("1")
+                            .font(theme.font(size: 10, weight: .medium))
+                            .foregroundColor(.white.opacity(0.8))
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 7)
-                    .notchCard(theme, tint: theme.cardHueActive ?? .cyan, active: true)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 13)
+                    .padding(.horizontal, 14)
+                    .environment(\.notchTheme, theme)
                 }
                 .frame(height: 66)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))

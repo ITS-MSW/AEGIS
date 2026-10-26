@@ -6,9 +6,6 @@ import Foundation
 /// followed by exactly that many bytes of JSON. Replaces the previous
 /// `n < bufSize` end-of-message heuristic which silently truncated any
 /// payload that didn't fit in a single read (issue #1).
-///
-/// For `PermissionRequest`, the connection stays open after the message is
-/// delivered; the response is then framed the same way back to the bridge.
 final class SocketServer {
     private let socketPath = "/tmp/aegis.sock"
     private let acceptQueue = DispatchQueue(label: "dev.aegis.socket.accept", qos: .userInitiated)
@@ -16,7 +13,7 @@ final class SocketServer {
     private var serverFd: Int32 = -1
     private var running = false
 
-    var onMessage: ((BridgeMessage, ((BridgeResponse) -> Void)?, ((Data) -> Void)?) -> Void)?
+    var onMessage: ((BridgeMessage) -> Void)?
 
     func start() {
         // Defense in depth: even with SO_NOSIGPIPE per-socket, install a
@@ -159,36 +156,16 @@ final class SocketServer {
             return
         }
 
-        let isPermission = message.hookEvent == "PermissionRequest"
-
-        // Both responders are guaranteed to call close(fd). SessionStore
-        // also guarantees one of them runs (issue #2).
-        let respond: ((BridgeResponse) -> Void)? = isPermission ? { [weak self] response in
-            Log.info("Socket: writing response to fd=\(fd)")
-            if let responseData = try? JSONEncoder().encode(response) {
-                self?.writeFramed(fd: fd, payload: responseData)
-            }
-            close(fd)
-        } : nil
-
-        let respondRaw: ((Data) -> Void)? = isPermission ? { [weak self] rawData in
-            Log.info("Socket: writing raw response to fd=\(fd), \(rawData.count) bytes")
-            self?.writeFramed(fd: fd, payload: rawData)
-            close(fd)
-        } : nil
-
         Log.info("Socket: parsed message source=\(message.source ?? "nil") hookEvent=\(message.hookEvent) session=\(message.sessionId.prefix(12)) toolName=\(message.toolName ?? "nil") effort=\(message.effortLevel ?? "nil") durationMs=\(message.durationMs.map(String.init) ?? "nil")")
 
         RunLoop.main.perform { [weak self] in
-            self?.onMessage?(message, respond, respondRaw)
+            self?.onMessage?(message)
         }
 
-        if !isPermission {
-            close(fd)
-        }
+        close(fd)
     }
 
-    // MARK: - Framed read/write helpers
+    // MARK: - Framed read helpers
 
     /// Read exactly 4 bytes and decode as big-endian UInt32. Returns nil on
     /// short read or error.
@@ -224,38 +201,4 @@ final class SocketServer {
         return ok ? data : nil
     }
 
-    /// Write a length-prefixed frame. Loops until all bytes are written.
-    /// Errors are logged but not raised — caller has already done its job.
-    private func writeFramed(fd: Int32, payload: Data) {
-        var header = [UInt8](repeating: 0, count: 4)
-        let len = UInt32(payload.count)
-        header[0] = UInt8((len >> 24) & 0xFF)
-        header[1] = UInt8((len >> 16) & 0xFF)
-        header[2] = UInt8((len >> 8) & 0xFF)
-        header[3] = UInt8(len & 0xFF)
-        writeAll(fd: fd, bytes: header, count: 4)
-        payload.withUnsafeBytes { raw in
-            if let base = raw.baseAddress {
-                writeAll(fd: fd, bytes: base.assumingMemoryBound(to: UInt8.self), count: payload.count)
-            }
-        }
-    }
-
-    private func writeAll(fd: Int32, bytes: UnsafePointer<UInt8>, count: Int) {
-        var sent = 0
-        while sent < count {
-            let n = write(fd, bytes.advanced(by: sent), count - sent)
-            if n > 0 {
-                sent += n
-            } else if errno == EINTR {
-                continue
-            } else {
-                let err = errno
-                if err != EPIPE {
-                    Log.error("Socket: write failed at \(sent)/\(count): \(String(cString: strerror(err)))")
-                }
-                return
-            }
-        }
-    }
 }

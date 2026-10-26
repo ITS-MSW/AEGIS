@@ -5,18 +5,15 @@ import AegisBridgeSupport
 
 final class SessionStorePublicationTests: XCTestCase {
     @MainActor
-    func testHiddenSubagentPermissionRemainsActionableThenDisappears() {
+    func testHiddenSubagentPermissionRemainsVisibleUntilProviderProgress() {
         let store = SessionStore()
-        var response: BridgeResponse?
 
         store.handleMessage(
-            message(event: "PermissionRequest", toolName: "Bash", parentSessionId: "parent"),
-            respond: { response = $0 }
+            message(event: "PermissionRequest", toolName: "Bash", parentSessionId: "parent")
         )
 
         XCTAssertEqual(store.sessions[Self.sessionId]?.status, .waitingPermission)
-        store.respondToPermission(sessionId: Self.sessionId, action: .allowOnce)
-        XCTAssertNotNil(response)
+        store.handleMessage(message(event: "PostToolUse", toolName: "Bash", parentSessionId: "parent"))
         XCTAssertNil(store.sessions[Self.sessionId])
     }
 
@@ -36,8 +33,7 @@ final class SessionStorePublicationTests: XCTestCase {
         }
 
         store.handleMessage(
-            message(event: "UserPromptSubmit", userMessage: "Optimize it"),
-            respond: nil
+            message(event: "UserPromptSubmit", userMessage: "Optimize it")
         )
 
         XCTAssertEqual(publications, 1)
@@ -66,7 +62,7 @@ final class SessionStorePublicationTests: XCTestCase {
             var publications = 0
             let cancellable = store.$sessions.dropFirst().sink { _ in publications += 1 }
 
-            store.handleMessage(bridgeMessage, respond: nil)
+            store.handleMessage(bridgeMessage)
 
             XCTAssertEqual(publications, 1, "case \(index): \(bridgeMessage.hookEvent)")
             withExtendedLifetime(cancellable) {}
@@ -74,59 +70,55 @@ final class SessionStorePublicationTests: XCTestCase {
     }
 
     @MainActor
-    func testMirroredQuestionPublishesOnce() {
+    func testNativeQuestionPublishesOnce() {
         let store = SessionStore()
         var publications = 0
         let cancellable = store.$sessions.dropFirst().sink { _ in publications += 1 }
         let input = #"{"questions":[{"question":"Continue?","header":"Choice","options":[{"label":"Yes"}]}]}"#
 
         store.handleMessage(
-            message(event: "PreToolUse", toolName: "request_user_input", toolInput: input),
-            respond: nil
+            message(event: "PreToolUse", toolName: "request_user_input", toolInput: input)
         )
 
         XCTAssertEqual(publications, 1)
         XCTAssertEqual(store.sessions["publication-session"]?.status, .waitingPermission)
-        XCTAssertNotNil(store.sessions["publication-session"]?.pendingQuestion)
+        XCTAssertTrue(store.sessions["publication-session"]?.executionState.waitingForUser ?? false)
         withExtendedLifetime(cancellable) {}
     }
 
     @MainActor
-    func testProgressEventResolvesPendingPermissionWithinOnePublication() {
+    func testProviderProgressResolvesWaitingStatusWithinOnePublication() {
         let store = SessionStore()
-        var response: PermissionAction?
         store.handleMessage(
-            message(event: "PermissionRequest", toolName: "Bash"),
-            respond: { _ in response = .allowOnce }
+            message(event: "PermissionRequest", toolName: "Bash")
         )
         var publications = 0
-        var dismissed = false
         let publication = store.$sessions.dropFirst().sink { _ in publications += 1 }
+        var progressed = false
         let events = store.onEvent.sink { event in
-            if case .pendingDismissedExternally = event { dismissed = true }
+            if case .toolStarted = event { progressed = true }
         }
 
-        store.handleMessage(message(event: "PreToolUse", toolName: "Bash"), respond: nil)
+        store.handleMessage(message(event: "PreToolUse", toolName: "Bash"))
 
         XCTAssertEqual(publications, 1)
-        XCTAssertEqual(response, .allowOnce)
-        XCTAssertTrue(dismissed)
-        XCTAssertNil(store.sessions["publication-session"]?.pendingPermission)
+        XCTAssertTrue(progressed)
+        XCTAssertEqual(store.sessions["publication-session"]?.status, .toolUse)
+        XCTAssertFalse(store.sessions["publication-session"]?.executionState.waitingForUser ?? true)
         withExtendedLifetime([publication, events]) {}
     }
 
     @MainActor
     func testIgnoredMessagesAndDuplicateSuggestionsPublishNothing() {
         let store = SessionStore()
-        store.handleMessage(message(event: "UserPromptSubmit", userMessage: "Start"), respond: nil)
-        store.handleMessage(message(event: "Stop", assistantMessage: "Done"), respond: nil)
+        store.handleMessage(message(event: "UserPromptSubmit", userMessage: "Start"))
+        store.handleMessage(message(event: "Stop", assistantMessage: "Done"))
         var publications = 0
         let cancellable = store.$sessions.dropFirst().sink { _ in publications += 1 }
 
-        store.handleMessage(message(event: "provider_raw_event"), respond: nil)
+        store.handleMessage(message(event: "provider_raw_event"))
         store.handleMessage(
-            message(event: "Stop", assistantMessage: #"{"suggestions":[{"title":"Next"}]}"#),
-            respond: nil
+            message(event: "Stop", assistantMessage: #"{"suggestions":[{"title":"Next"}]}"#)
         )
 
         XCTAssertEqual(publications, 0)
@@ -144,7 +136,7 @@ final class SessionStorePublicationTests: XCTestCase {
 
         for index in 0..<1_000 {
             let event = index.isMultiple(of: 2) ? "PreToolUse" : "PostToolUse"
-            store.handleMessage(message(event: event, toolName: "Read"), respond: nil)
+            store.handleMessage(message(event: event, toolName: "Read"))
         }
 
         XCTAssertEqual(publications, 1_000)
@@ -155,21 +147,21 @@ final class SessionStorePublicationTests: XCTestCase {
     @MainActor
     func testActivityUpdatesAreEphemeralAndIgnoreLateOrDuplicateContent() {
         let store = SessionStore()
-        store.handleMessage(message(event: "ActivityUpdate", activitySummary: "Too early"), respond: nil)
+        store.handleMessage(message(event: "ActivityUpdate", activitySummary: "Too early"))
         XCTAssertNil(store.sessions[Self.sessionId])
 
-        store.handleMessage(message(event: "UserPromptSubmit", userMessage: "Start"), respond: nil)
-        store.handleMessage(message(event: "ActivityUpdate", activitySummary: "  Checking\nfiles  "), respond: nil)
+        store.handleMessage(message(event: "UserPromptSubmit", userMessage: "Start"))
+        store.handleMessage(message(event: "ActivityUpdate", activitySummary: "  Checking\nfiles  "))
         XCTAssertEqual(store.sessions[Self.sessionId]?.activitySummary, "Checking files")
 
         var publications = 0
         let cancellable = store.$sessions.dropFirst().sink { _ in publications += 1 }
-        store.handleMessage(message(event: "ActivityUpdate", activitySummary: "Checking files"), respond: nil)
+        store.handleMessage(message(event: "ActivityUpdate", activitySummary: "Checking files"))
         XCTAssertEqual(publications, 0)
 
-        store.handleMessage(message(event: "Stop", assistantMessage: "Done"), respond: nil)
+        store.handleMessage(message(event: "Stop", assistantMessage: "Done"))
         XCTAssertNil(store.sessions[Self.sessionId]?.activitySummary)
-        store.handleMessage(message(event: "ActivityUpdate", activitySummary: "Too late"), respond: nil)
+        store.handleMessage(message(event: "ActivityUpdate", activitySummary: "Too late"))
         XCTAssertNil(store.sessions[Self.sessionId]?.activitySummary)
         withExtendedLifetime(cancellable) {}
     }
@@ -177,37 +169,16 @@ final class SessionStorePublicationTests: XCTestCase {
     @MainActor
     func testToolActivityRemainsVisibleBetweenToolCalls() {
         let store = SessionStore()
-        store.handleMessage(message(event: "UserPromptSubmit", userMessage: "Start"), respond: nil)
-        store.handleMessage(message(event: "PreToolUse", toolName: "functions.exec"), respond: nil)
+        store.handleMessage(message(event: "UserPromptSubmit", userMessage: "Start"))
+        store.handleMessage(message(event: "PreToolUse", toolName: "functions.exec"))
 
         XCTAssertEqual(store.sessions[Self.sessionId]?.status, .toolUse)
         XCTAssertEqual(store.sessions[Self.sessionId]?.activitySummary, "Running command")
 
-        store.handleMessage(message(event: "PostToolUse", toolName: "functions.exec"), respond: nil)
+        store.handleMessage(message(event: "PostToolUse", toolName: "functions.exec"))
 
         XCTAssertEqual(store.sessions[Self.sessionId]?.status, .thinking)
         XCTAssertEqual(store.sessions[Self.sessionId]?.activitySummary, "Running command")
-    }
-
-    @MainActor
-    func testThreeExplicitSameToolFailuresEmitOneSkillIssueEvent() {
-        let store = SessionStore()
-        var detectedTools: [String] = []
-        let events = store.onEvent.sink { event in
-            if case .skillIssueDetected(_, let toolName) = event {
-                detectedTools.append(toolName)
-            }
-        }
-
-        for _ in 0..<4 {
-            store.handleMessage(
-                message(event: "PostToolUse", toolName: "Bash", toolOutcome: .failure),
-                respond: nil
-            )
-        }
-
-        XCTAssertEqual(detectedTools, ["Bash"])
-        withExtendedLifetime(events) {}
     }
 
     private static let sessionId = "publication-session"

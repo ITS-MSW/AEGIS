@@ -1,6 +1,6 @@
 # Aegis Engineering Guide
 
-Aegis is a native macOS notch app for monitoring four AI coding agents: Codex, Hermes, OpenCode, and AntiGravity. It is written in Swift 5.9+ with SwiftUI and AppKit, targets macOS 14+, and builds with Swift Package Manager.
+Aegis is a native macOS notch app for monitoring four AI coding agents: Codex, Hermes, OpenCode, and AntiGravity. It is written in Swift 6.2 with Swift 5 language mode with SwiftUI and AppKit, targets macOS 14+, and builds with Swift Package Manager.
 
 ## Architecture
 
@@ -38,11 +38,11 @@ open build/Aegis.app
 - `opencode`
 - `antigravity`
 
-Each provider owns a display name, accent color, mascot palette, mascot shape, and supported permission actions. CLI icons live in `Resources/cli-icons/<id>.png`; rendered documentation mascots live in `docs/mascots/<id>.png`.
+Each provider owns a display name, accent color, mascot palette, and mascot shape. CLI icons live in `Resources/cli-icons/<id>.png`; rendered documentation mascots live in `docs/mascots/<id>.png`.
 
 ## Bridge protocol
 
-Each hook invokes `AegisBridge`, which reads JSON from stdin, stamps the provider source, captures its parent PID and terminal environment, normalizes the event, and sends one newline-delimited JSON message over the Unix socket.
+Each hook invokes `AegisBridge`, which reads JSON from stdin, stamps the provider source, captures its parent PID, normalizes the event, and sends one four-byte big-endian length-prefixed JSON message over the Unix socket, then exits without waiting for a reply or printing a decision.
 
 The canonical events are:
 
@@ -57,10 +57,11 @@ The canonical events are:
 - `SubagentStart`
 - `SubagentStop`
 - `PreCompact`
+- `ActivityUpdate`
 
 `SessionStore` rejects non-canonical events. Preserve this guard: a foreign hook sharing the socket must not create or mutate a session.
 
-Important bridge fields include `session_id`, `hook_event`, `source`, `cwd`, `tool_name`, `tool_input`, `user_message`, `assistant_message`, `agent_pid`, `_env`, and the optional file/diff fields used by permission cards.
+Important bridge fields include `session_id`, `hook_event`, `source`, `cwd`, `tool_name`, `tool_input`, `user_message`, `assistant_message`, `agent_pid`, `parent_session_id`, `is_ephemeral`, and `activity_summary`.
 
 ## Provider normalization
 
@@ -68,31 +69,27 @@ Important bridge fields include `session_id`, `hook_event`, `source`, `cwd`, `to
 
 Codex uses native `hooks.json` events plus `[features].hooks = true` in `~/.codex/config.toml`. The installer merges managed commands without replacing foreign hooks.
 
-Codex permission responses use the canonical allow/deny response. `Allow All` and `Bypass` persist a `prefix_rule` through `CodexPermissionRules` when the request can be represented as a shell prefix, then allow the current request. Do not send unsupported permission-update payloads to Codex.
+Codex permissions and `request_user_input` remain provider-owned. The bridge reports waiting status without returning approval decisions or modifying existing rules.
 
-Codex `request_user_input` arrives through `PreToolUse`. The notch mirrors the question, but the hook cannot substitute an answer. A response jumps to Codex or its terminal; `PostToolUse` dismisses the mirrored question.
-
-The Codex app-server client enriches sessions with thread names and lifecycle events. The process sweep remains the fallback for sessions whose hook stream omits a terminal event.
+The passive Codex Desktop watcher enriches sessions with thread names and lifecycle events. The process sweep remains the fallback for sessions whose hook stream omits a terminal event.
 
 ### Hermes
 
 Hermes hooks are merged into `~/.hermes/config.yaml`. Preserve existing YAML content and foreign hooks. Hermes event names are normalized into the canonical set.
 
-The bridge strips terminal control sequences, translates consent events into permission requests, and reshapes `clarify` payloads into the canonical question structure. Hermes question answers remain in Hermes; the notch jumps to the originating terminal or app.
-
-Strict approval is opt-in and mirrored to `~/.aegis/config.json` so the bridge can read it without attaching to the app process.
+The bridge sanitizes raw control characters inside JSON strings and normalizes Hermes lifecycle events. `clarify` marks the session waiting; questions are answered in Hermes. Pre-tool hooks are observational.
 
 ### OpenCode
 
 The installer writes the Aegis plugin under `~/.config/opencode/plugins/` and registers it in `~/.config/opencode/opencode.json` without discarding unrelated plugins.
 
-The plugin translates OpenCode lifecycle events, `permission.asked`, and question events into canonical bridge messages. It applies the bridge response through OpenCode's local API. Preserve the plugin's session, permission, and question identifiers.
+The plugin translates OpenCode lifecycle events, `permission.asked`, and question events into canonical bridge messages. It never calls approval or question-answer APIs. Keep observations nonblocking so OpenCode retains its native prompts and approval policy.
 
 ### AntiGravity
 
 The installer merges a named `aegis` hook group into `~/.gemini/config/hooks.json`. It only installs when AntiGravity is detected under `~/.gemini/antigravity`. AntiGravity must be restarted after hook changes because its daemon caches configuration.
 
-AntiGravity emits limited hook payloads. The bridge reads its `transcript.jsonl` to recover the latest user request and model planner response. Its `PreToolUse` event can become a blocking permission request when strict approval is enabled, and the canonical decision is translated back into AntiGravity's native response.
+AntiGravity emits limited hook payloads. The bridge reads its `transcript.jsonl` to recover the latest user request and model planner response. Its tool hooks remain observational and leave native approvals unchanged.
 
 ## Installer guarantees
 
@@ -108,44 +105,28 @@ The retained installer formats are `hermesYAML`, `opencodePlugin`, and `antigrav
 
 ## Session lifecycle
 
-`SessionStore` is the session source of truth. It maintains active state, current tool, pending permissions/questions, terminal metadata, last user/assistant text, model, and provider identity.
+`SessionStore` is the session source of truth. It maintains active state, current tool, execution/waiting status, last user/assistant text, model, and provider identity.
 
 The process sweep runs every five seconds. It validates the captured PID and process start time before marking a vanished agent complete, preventing false matches after PID reuse. Session persistence and recovery must remain provider-neutral.
 
-Pending decisions are queued oldest-first. The notch must not switch to a second prompt while the user is acting on the first. Terminal-side completion dismisses the matching prompt and advances the queue.
+Waiting permissions and questions are passive status signals. Resume execution tracking only when the provider reports progress; completion and process sweeping still end execution leases.
 
-## Terminal jump
+## Compact notch
 
-`TerminalJumper` uses captured terminal metadata to return to the originating tab, pane, or app. Keep the specific adapters for Terminal, iTerm2, tmux, Ghostty, Kitty, WezTerm, VS Code-family terminals, JetBrains IDEs, and Codex.app. Terminal support is independent of the four agent integrations.
+`NotchWindowController` owns a single compact size per display configuration and visibility based on active sessions. Its borderless AppKit panel ignores mouse events and cannot become key. The SwiftUI content shows only the latest active provider mascot, aggregate status, and count.
 
-## UI engines
-
-The notch is an AppKit panel hosting SwiftUI. It is borderless, non-activating, top-centered, and adapts to notch and non-notch displays. State consists of collapsed, expanded, finished, permission, and question views.
-
-The following are retained engines, not provider-specific code:
-
-- theme tokens and themed surface modifiers
-- pixel mascot renderer and animation timing
-- sound synthesis and sound-pack loading
-- rate-limit display and polling
-- notification delivery
-- permission and question queue
-- terminal jumping
-
-Themes may change chrome but must preserve semantic status and action colors. Mascot palettes remain provider-owned.
+Preserve screen adaptation, provider mascot palettes, compact typography, sound synthesis, and keep-awake safeguards. Permissions and questions stay in the originating provider. The menu bar offers app controls without a session list. Dictation remains in its independent bottom capsule.
 
 ## Logging and state
 
 Runtime state is under `~/.aegis`:
 
-- `cache/rl.json`
 - `debug.log`
 - `sound-packs/`
-- `config.json`
 - `bin/`
 
 The app bundle identifier and UserDefaults domain are `dev.aegis.app`. The sole socket path is `/tmp/aegis.sock`.
 
 ## Change discipline
 
-Keep diffs limited to the requested behavior. Do not replace the bridge, installer, session, theme, mascot, sound, or terminal engines with new abstractions. After changes, run `swift build`; for release-affecting changes also run `swift build -c release` and `./scripts/build-app.sh`.
+Keep diffs limited to the requested behavior. Do not replace the bridge, installer, session, theme, mascot, sound, or power engines with new abstractions. After changes, run `swift build`; for release-affecting changes also run `swift build -c release` and `./scripts/build-app.sh`.

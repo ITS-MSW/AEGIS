@@ -35,13 +35,11 @@ if [ -d Resources/cli-icons ]; then
   cp -R Resources/cli-icons "$APP/Contents/Resources/cli-icons"
 fi
 
-if [ -d Resources/companion ]; then
-  cp -R Resources/companion "$APP/Contents/Resources/companion"
-fi
-
 if [ -d Resources/sounds ]; then
   cp -R Resources/sounds "$APP/Contents/Resources/sounds"
 fi
+
+cp -R Resources/ThirdPartyNotices "$APP/Contents/Resources/ThirdPartyNotices"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -62,10 +60,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>$VERSION</string>
     <key>LSUIElement</key>
     <true/>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>Aegis uses System Events to focus the exact Hermes session you select.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Aegis uses your microphone when you start dictation or hold the voice handoff shortcut.</string>
+    <string>Aegis uses your microphone when you start dictation.</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleIconFile</key>

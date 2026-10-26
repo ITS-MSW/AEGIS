@@ -80,62 +80,20 @@ struct OnboardingView: View {
         }
     }
 
-    // MARK: - Faux notch (the live, themed demo island)
+    // MARK: - Compact notch preview
 
     private var fauxNotch: some View {
-        let glow = (theme.cardHueActive ?? .cyan).opacity(0.20)
-        return ZStack {
-            Ellipse()
-                .fill(glow)
-                .frame(width: 560, height: 130)
-                .blur(radius: 80)
-                .offset(y: 10)
-
-            ZStack(alignment: .top) {
-                NotchBackground(theme: theme, isExpanded: true, cornerRadius: 22)
-                fauxNotchCard
-                    .padding(.horizontal, 16)
-                    .padding(.top, 46)      // clear the hardware notch occlusion
-                    .padding(.bottom, 14)
-            }
-            .frame(width: 600, height: 128)
-            .clipShape(NotchShape(cornerRadius: 22))
+        HStack {
+            SessionMascot(status: .thinking, size: 16, provider: .codex)
+            Spacer()
+            Circle().fill(.cyan).frame(width: 6, height: 6)
+            Text("1")
+                .font(theme.font(size: 10, weight: .medium))
+                .foregroundColor(.white.opacity(0.8))
         }
-        .frame(height: 128)
-    }
-
-    /// A themed mock session card — mirrors what `SessionCardView` would render,
-    /// so it's an accurate live preview of the chosen theme.
-    private var fauxNotchCard: some View {
-        let tint = theme.cardHueActive ?? .cyan
-        return HStack(spacing: 10) {
-            SessionMascot(status: .thinking, size: 26, provider: .codex)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text("aegis")
-                        .font(theme.font(size: 13, weight: .heavy))
-                        .foregroundColor(theme.cardForeground)
-                    HStack(spacing: 5) {
-                        Circle().fill(Color.cyan).frame(width: 5, height: 5)
-                        Text("thinking")
-                            .font(theme.font(size: 10, weight: .bold))
-                            .foregroundColor(.cyan)
-                    }
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .notchPill(theme, fill: theme.chipFill(.cyan.opacity(0.15)))
-                    Spacer(minLength: 0)
-                }
-                Text("fix the notch resize bug on resolution change…")
-                    .font(theme.font(size: 11))
-                    .foregroundColor(theme.cardForeground.opacity(0.7))
-                    .lineLimit(1)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .notchCard(theme, tint: tint, active: true)
+        .padding(.horizontal, 14)
+        .frame(width: 280, height: 32)
+        .background(NotchShape(cornerRadius: 14).fill(.black))
     }
 
     // MARK: - Step content
@@ -153,7 +111,7 @@ struct OnboardingView: View {
     private var welcomeStep: some View {
         VStack(spacing: 20) {
             title("Welcome to Aegis")
-            subtitle("Your MacBook's notch is now mission control for Codex, Hermes, OpenCode, and AntiGravity. Approve permissions, answer questions, and track activity without leaving your editor.")
+            subtitle("Track Codex, Hermes, OpenCode, and AntiGravity at a glance with live agent status in your MacBook's notch.")
             primaryButton("Get Started", action: advance)
         }
     }
@@ -165,8 +123,7 @@ struct OnboardingView: View {
             VStack(alignment: .leading, spacing: 10) {
                 hookRow("SessionStart / SessionEnd", "Track each session's lifecycle")
                 hookRow("PreToolUse / PostToolUse", "Follow tool execution live")
-                hookRow("PermissionRequest", "Approve or deny from the notch")
-                hookRow("Notification / Stop", "Status + finished-reply updates")
+                hookRow("Notification / Stop", "Follow agent status and completion")
             }
             .padding(18)
             .frame(maxWidth: 460)
@@ -276,17 +233,15 @@ struct OnboardingView: View {
         } label: {
             VStack(spacing: 8) {
                 ZStack {
-                    NotchBackground(theme: t, isExpanded: true, cornerRadius: 9)
+                    NotchShape(cornerRadius: 9).fill(.black)
                     HStack(spacing: 5) {
-                        SessionMascot(status: .thinking, size: 15, provider: .codex)
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(t.cardForeground.opacity(0.45))
-                            .frame(width: 30, height: 5)
+                        SessionMascot(status: .thinking, size: 15, animated: false, provider: .codex)
                         Spacer(minLength: 0)
+                        Circle().fill(.cyan).frame(width: 5, height: 5)
+                        Text("1").font(t.font(size: 10, weight: .medium)).foregroundColor(.white.opacity(0.8))
                     }
-                    .padding(6)
-                    .notchCard(t, tint: t.cardHueActive ?? .cyan, active: true)
                     .padding(8)
+                    .environment(\.notchTheme, t)
                 }
                 .frame(width: 108, height: 60)
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -577,22 +532,13 @@ struct WhatsNewView: View {
     private let highlights: [Highlight] = [
         .init(symbol: "circle.hexagongrid.fill", tint: Color(red: 0.902, green: 0.141, blue: 0.161),
               title: "New theme: Web-Slinger",
-              detail: "Midnight and suit red, webbing spun into the corners, and a masked spider that abseils in on a thread — Settings → Appearance."),
+              detail: "Rounded typography and a masked Codex mascot — Settings → Appearance."),
         .init(symbol: "sparkles", tint: Color(red: 0.62, green: 0.42, blue: 1.0),
               title: "Four coding agents, one notch",
-              detail: "Codex, Hermes, OpenCode, and AntiGravity stay visible side by side."),
+              detail: "Codex, Hermes, OpenCode, and AntiGravity contribute live status to the compact notch."),
         .init(symbol: "face.smiling", tint: Color(red: 0.42, green: 0.95, blue: 0.75),
               title: "A mascot for everyone",
               detail: "Every agent gets its own animated pixel mascot and logo, themed to its brand."),
-        .init(symbol: "bell.badge", tint: Color(red: 1.0, green: 0.72, blue: 0.30),
-              title: "Smart, per-agent permissions",
-              detail: "Approve, deny, or answer questions right in the notch — with the buttons each tool actually supports."),
-        .init(symbol: "lock.shield", tint: Color(red: 0.37, green: 0.78, blue: 1.0),
-              title: "“Review every action” mode",
-              detail: "Optional strict approval for Hermes and AntiGravity — Settings → General."),
-        .init(symbol: "arrow.up.right.square.fill", tint: Color(red: 0.55, green: 0.70, blue: 0.98),
-              title: "Questions stay in view",
-              detail: "Codex and Hermes questions appear in the notch with a direct jump back to the right terminal or app."),
     ]
 
     var body: some View {

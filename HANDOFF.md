@@ -16,18 +16,22 @@ swift build -c release
 open build/Aegis.app
 ```
 
-Final verification passed for the debug build, release build, bundle assembly, `Info.plist` validation, and `codesign --verify --deep --strict`. The local bundle is ad-hoc signed, not Developer ID signed or notarized.
+Earlier verification passed for the debug build, release build, bundle assembly, `Info.plist` validation, and `codesign --verify --deep --strict`. The local bundle is ad-hoc signed, not Developer ID signed or notarized.
 
-## Follow-up improvements
+## Compact-notch cleanup
 
-- Codex quota display now classifies windows from API duration, shows remaining quota, and refreshes every minute. Current verified output: `7d 42% left 5d3h`.
-- Notch hover is instant on the standalone built-in display. With multiple active displays it uses a 350ms intent delay so fast crossings cancel. Click still opens immediately, and Settings includes an `Expand on hover` toggle for click-only mode.
+The notch now has one passive compact presentation. Expanded sessions, replies, permission/question views, expansion settings and animations, menu-bar session jumps, and terminal navigation are removed. Background session tracking, sounds, keep-awake, and bottom dictation remain.
+
+Permission and question events update waiting status only. The bridge exits after sending events, the socket does not return decisions, and the OpenCode plugin never calls approval APIs. Provider rules and previously saved approval files are left untouched. Updated managed hooks/plugins take effect after the next app update and provider reload; no installed app or live provider configuration was changed during this source cleanup.
+
+Validation for this cleanup: debug build passed; all 131 retained tests passed; release build and app-bundle assembly passed with valid plist and strict code-signature verification. Generated OpenCode JavaScript and packaging-shell syntax checks passed. Live UI and native-provider prompt behavior were not exercised, and the rebuilt bundle was not installed or launched.
+
+## Earlier follow-up improvements
+
 - Default game-style waveforms were replaced by restrained sine-partial notification tones. Session start/end and tool-use chatter default to Off.
-- The purple-black `Aegis` appearance is selected by default through a one-time preference migration. Window chrome, cards, pills, and action wells now use purple-black surfaces; semantic cyan/green/orange remains limited to meaningful text, icons, and borders.
 - Command-comma now opens the real Settings window instead of the empty SwiftUI settings scene.
 - Codex Desktop is monitored through appended rollout JSONL events in `~/.codex/sessions`; the previous redundant `codex app-server` subprocess was removed.
 - Hermes Desktop is monitored through new desktop-only message rows in `~/.hermes/state.db` using SQLite WAL-safe reads.
-- Session cards are native buttons. Codex Desktop cards open the exact task, while Hermes cards focus the matching native tab after macOS Accessibility approval. Cards remain available long enough after an intentional click to make the destination action reliable.
 - Follow-up GUI evidence: [`docs/test-evidence/17-followup-results.txt`](docs/test-evidence/17-followup-results.txt).
 
 ## Scope completed
@@ -36,7 +40,7 @@ Final verification passed for the debug build, release build, bundle assembly, `
 - Deleted 56 tracked upstream files across provider implementations, provider artwork, old documentation/site assets, credits, licensing, funding, updater, and demo tooling.
 - Removed all 9 requested upstream-identity search targets from the working tree, together with upstream repository URLs, update feed, screenshots, and logo artwork.
 - Renamed the app, products, targets, bundle identity, socket, config domain, bridge, launchers, defaults domain, hook marker, and on-disk state to Aegis.
-- Preserved the bridge, socket protocol, canonical events, in-memory session store and process sweep, terminal jumper, permission/question queue, rate-limit polling, sound engine, theme tokens, and mascot engine.
+- Preserved the bridge, canonical lifecycle events, in-memory session tracking and process sweep, sound engine, and mascot engine.
 - Rewrote the README, engineering spec, and changelog in English.
 
 `AIProvider.all` is the source of truth and contains exactly:
@@ -45,7 +49,9 @@ Final verification passed for the debug build, release build, bundle assembly, `
 [.codex, .hermes, .opencode, .antigravity]
 ```
 
-## Computer-use test results
+## Historical computer-use results
+
+These results predate the compact-notch cleanup and are not runtime validation of the current source.
 
 | Checklist item | Result | Evidence |
 | --- | --- | --- |
@@ -56,20 +62,14 @@ Final verification passed for the debug build, release build, bundle assembly, `
 | 3. OpenCode live working → finished | Pass | [`docs/test-evidence/06-opencode-working.png`](docs/test-evidence/06-opencode-working.png), [`docs/test-evidence/11-runtime-results.txt`](docs/test-evidence/11-runtime-results.txt) |
 | 3. Codex CLI live working → finished | Partial / live UI untested | The real command completed, but installed Codex CLI 0.135.0 did not emit lifecycle hooks. Direct launcher → bridge → socket delivery passed. See [`docs/test-evidence/11-runtime-results.txt`](docs/test-evidence/11-runtime-results.txt). |
 | 3. Codex Desktop live prompt/tool state | Pass | [`docs/test-evidence/codex-desktop-working.png`](docs/test-evidence/codex-desktop-working.png), [`docs/test-evidence/desktop-sessions-expanded.png`](docs/test-evidence/desktop-sessions-expanded.png), [`docs/test-evidence/19-desktop-session-results.txt`](docs/test-evidence/19-desktop-session-results.txt) |
-| Desktop session-card jump | Codex pass; Hermes partial pending owner permission | Codex cards opened exact thread IDs. Hermes activated and reached the exact-tab Accessibility boundary; its first click now requests the required permission. [`docs/test-evidence/20-clickable-session-cards.jpeg`](docs/test-evidence/20-clickable-session-cards.jpeg), [`docs/test-evidence/21-session-jump-results.txt`](docs/test-evidence/21-session-jump-results.txt) |
-| Complete purple-black Aegis surfaces | Pass | Built app GUI shows the window, session card, status pill, and action well using the intended purple-black surface system. Semantic cyan remains only on the tool-state content. [`docs/test-evidence/22-complete-aegis-theme.jpeg`](docs/test-evidence/22-complete-aegis-theme.jpeg) |
 | 3. AntiGravity live working → finished | Partial / live UI untested | The real `agy --print` command completed, but the headless client did not emit its configured hooks. See [`docs/test-evidence/11-runtime-results.txt`](docs/test-evidence/11-runtime-results.txt). |
-| 4. Permission Allow and Deny | Pass | [`docs/test-evidence/08-opencode-permission.png`](docs/test-evidence/08-opencode-permission.png), [`docs/test-evidence/09-opencode-deny.png`](docs/test-evidence/09-opencode-deny.png), [`docs/test-evidence/11-runtime-results.txt`](docs/test-evidence/11-runtime-results.txt) |
-| 5. Terminal jump | Untested | Computer Use refused access to Ghostty for safety reasons, so the destination tab could not be driven or observed. |
 | 6. Finish sound and macOS notification | Partial / untested | Completion events reached SoundEngine without error, but audible output cannot be verified through Computer Use. The preserved upstream engine has no macOS user-notification implementation; its completion notification is the notch card. |
 | 7. Quit and clean relaunch | Pass | [`docs/test-evidence/10-clean-relaunch.png`](docs/test-evidence/10-clean-relaunch.png), [`docs/test-evidence/11-runtime-results.txt`](docs/test-evidence/11-runtime-results.txt) |
 | 7. Session recovery after relaunch | Unsupported / untested | The preserved SessionStore is in-memory and has no disk serialization, so cross-process session recovery cannot be claimed. |
 
 No crash, hang, or focus steal occurred during the completed GUI tests.
 
-The built app includes an Apple Events usage description for exact Hermes navigation. On the first Hermes card click, macOS asks the owner to grant Aegis Accessibility access. Without it, Hermes is still focused but its exact session tab cannot be selected.
-
-Codex and Hermes desktop monitoring is read-only. It covers prompt, thinking, tool, final-response, model, title, and workspace state. Provider-owned desktop permission dialogs remain in their respective desktop apps; notch Allow/Deny continues to apply to interactive CLI hook requests.
+Codex and Hermes desktop monitoring is read-only. It covers prompt, thinking, tool, final-response, model, title, and workspace state. Permission dialogs remain in their respective providers for both desktop and CLI sessions.
 
 ## Real agent configuration changes
 
@@ -85,8 +85,7 @@ The corresponding Codex hooks, Gemini/AntiGravity hooks, and OpenCode JSONC file
 
 - `CLAUDE.md` remains as the repository's engineering-spec filename; its content is rewritten for Aegis and contains no Claude provider integration.
 - `~/.gemini/config/hooks.json` and `.gemini/antigravity` remain because they are AntiGravity's required configuration and detection paths, not a Gemini provider integration.
-- `cursor` remains only in TerminalJumper's supported editor/terminal targeting logic; no Cursor agent provider remains.
-- `https://github.com/simibac/ConfettiSwiftUI.git` remains as the sole GitHub package dependency and is unrelated to upstream identity.
+- ConfettiSwiftUI and FluidAudio remain as package dependencies.
 - The first fresh-history commit subject names the imported upstream repository because Phase 0 explicitly required that subject; no upstream commits or ancestry remain.
 - The upstream checkout contained no `ios/CodeIslandCompanion` or `apple-companion` tree, so there was no companion source available to preserve or rename.
 

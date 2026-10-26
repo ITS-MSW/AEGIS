@@ -1,8 +1,14 @@
 import AppKit
 
 enum DictationMode: String, CaseIterable {
-    case toggle, hold
-    var title: String { self == .toggle ? "Toggle recording" : "Hold to dictate" }
+    case toggle, hold, press
+    var title: String {
+        switch self {
+        case .toggle: return "Double-press to toggle"
+        case .hold: return "Hold to talk"
+        case .press: return "Press to toggle"
+        }
+    }
 }
 
 enum DictationShiftKey: String, CaseIterable {
@@ -76,9 +82,13 @@ struct DictationShortcutState {
             if recording { recording = false; return .stop }
             return nil
         }
-        guard !contaminated, !modified, time - pressedAt <= 0.25 else {
+        guard !contaminated, !modified, mode == .press || time - pressedAt <= 0.25 else {
             lastTap = nil
             return nil
+        }
+        if mode == .press {
+            recording.toggle()
+            return recording ? .start : .stop
         }
         if let previous = lastTap, pressedAt - previous <= 0.35 {
             lastTap = nil

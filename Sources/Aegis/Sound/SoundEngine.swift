@@ -101,15 +101,16 @@ struct AudioEngineLifecyclePolicy {
 }
 
 enum SoundEvent: String, CaseIterable {
-    case sessionStart = "session-start"
     case sessionEnd = "session-end"
-    case toolUse = "tool-use"
-    case completion = "completion"
     case error = "error"
-    case approvalNeeded = "approval-needed"
-    case approvalGranted = "approval-granted"
-    case approvalDenied = "approval-denied"
-    case skillIssue = "skill-issue"
+
+    init?(sessionEvent: SessionEvent) {
+        switch sessionEvent {
+        case .sessionEnded: self = .sessionEnd
+        case .statusChanged(_, .error): self = .error
+        default: return nil
+        }
+    }
 }
 
 @MainActor
@@ -132,21 +133,7 @@ final class SoundEngine {
 
     func play(_ event: SessionEvent) {
         guard enabled else { return }
-        let soundEvent: SoundEvent? = {
-            switch event {
-            case .sessionStarted: return .sessionStart
-            case .sessionEnded: return .sessionEnd
-            case .toolStarted: return .toolUse
-            case .statusChanged(_, let status) where status == .idle: return .completion
-            case .statusChanged(_, let status) where status == .error: return .error
-            case .permissionRequested: return .approvalNeeded
-            case .permissionResponded(_, let allowed): return allowed ? .approvalGranted : .approvalDenied
-            case .skillIssueDetected: return .skillIssue
-            default: return nil
-            }
-        }()
-
-        guard let soundEvent,
+        guard let soundEvent = SoundEvent(sessionEvent: event),
               assignments[soundEvent.rawValue] != "off",
               let buffer = buffer(for: soundEvent) else { return }
         playBuffer(buffer, gain: eventVolume(for: soundEvent))
@@ -189,7 +176,7 @@ final class SoundEngine {
         }
     }
 
-    /// Preview the three semantic cues without changing event assignments.
+    /// Preview both event cues without changing event assignments.
     func previewProfile(_ profile: SoundProfile) {
         for event in profile.previewEvents {
             if let buffer = defaultBuffer(for: event, profile: profile) {
